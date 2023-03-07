@@ -5,14 +5,23 @@ def ReturnNotes(typeFile):
     xlsxPath = r"C:\Users\dmlee\PycharmProjects\TKA"
     if typeFile == "smaller":
         xlsxFileName = r"C:\Users\dmlee\PycharmProjects\TKA\R521_27447_OP_NOTE_102.xlsx"
-        temp = pd.read_csv(r"C:\Users\dmlee\PycharmProjects\TKA\R521_27447_OP_NOTE_102_labels.csv", dtype={"maker_start": 'Int64', "maker_stop": 'Int64'})
+        temp = pd.read_csv(r"C:\Users\dmlee\PycharmProjects\TKA\R521_27447_OP_NOTE_102_labels.csv", dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
 
     elif typeFile == "larger":
         xlsxFileName = "TOTAL_KNEE_ARTHROPLASTY__(27447).XLSX"  # One with over 1000
+        temp = pd.read_csv(r"C:\Users\dmlee\PycharmProjects\TKA\TOTAL_KNEE_ARTHROPLASTY__(27447)_labels.csv",
+                           dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
+
+    medNotes_dtypes = {"OP_NOTE": str, "AGE at CPT CODE":'Int64', "height in Inches":'Float64', "Weight in KGs":'Float64',
+                       "Last recorded BMI":'Float64', "Ethnic_Group":str, "Smoking":str, "Sex":str, "Race":str}
 
     # Read in medical notes
     xlsx_file_path = os.path.join(xlsxPath, xlsxFileName)
-    medicalNotes = pd.read_excel(xlsx_file_path, dtype={"OP_NOTE": str})
+    medicalNotes = pd.read_excel(xlsx_file_path, dtype=medNotes_dtypes, na_values="NULL")
+
+    # Drop rows that are all missing
+    medicalNotes = medicalNotes.dropna(axis=0, how="all")
+    medicalNotes = medicalNotes.reset_index(drop=True)
 
     # Remove any whitespaces that have more than one in a row
     medicalNotes["OP_NOTE"] = medicalNotes["OP_NOTE"].apply(lambda x: " ".join(x.split()))
@@ -29,9 +38,9 @@ def ReturnNotes(typeFile):
 
 
 def extractModelInfo(Notes):
-    model_input = Notes[["pat_id", "OP_NOTE", "maker", "maker_start"]]
-    model_input = model_input.rename(
-        {"pat_id": "id", "OP_NOTE": "context", "maker": "text", "maker_start": "answer_start"}, axis=1)
+    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Raw_Label", "Label_Start"]]
+    model_input = model_input.rename({"pat_id": "id", "Question": "question",
+                                      "OP_NOTE": "context", "Raw_Label": "text", "Label_Start": "answer_start"}, axis=1)
 
     # Remove any observations that do not have label
     model_input = model_input.dropna(subset=["text"], axis=0)
