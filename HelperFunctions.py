@@ -38,9 +38,20 @@ def ReturnNotes(typeFile):
 
 
 def extractModelInfo(Notes):
-    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Raw_Label", "Label_Start"]]
+    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Label", "Raw_Label", "Label_Start", "Raw_Label_Start"]]
+
+    # For now, replace Label with Raw_Label for PS/CR Question
+    model_input[model_input["Question"]=="What is the contraint type?"]["Label"] = \
+        model_input[model_input["Question"]=="What is the contraint type?"]["Raw_Label"]
+
+    model_input[model_input["Question"] == "What is the contraint type?"]["Label_Start"] = \
+        model_input[model_input["Question"] == "What is the contraint type?"]["Raw_Label_Start"]
+
+    model_input = model_input.drop(columns=["Raw_Label", "Raw_Label_Start"])
+
+    # Rename columns to ones defined in custom feature list for huggingface dataset
     model_input = model_input.rename({"pat_id": "id", "Question": "question",
-                                      "OP_NOTE": "context", "Raw_Label": "text", "Label_Start": "answer_start"}, axis=1)
+                                      "OP_NOTE": "context", "Label": "text", "Label_Start": "answer_start"}, axis=1)
 
     # Remove any observations that do not have label
     model_input = model_input.dropna(subset=["text"], axis=0)

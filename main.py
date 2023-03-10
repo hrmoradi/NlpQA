@@ -4,8 +4,10 @@ from HelperFunctions import ReturnNotes, extractModelInfo, addQuestion, importMo
     preprocess_validation_examples, compute_metrics
 
 
-def Pipeline(fileType, hyperparameters):
-    medicalNotes_train = ReturnNotes("larger")
+def Pipeline(ds_dict, hyperparameters):
+    medicalNotes_train = ReturnNotes(ds_dict["train"])
+    medicalNotes_train = medicalNotes_train.sample(frac=1, random_state=seed).reset_index(drop=True)
+
     model_input_train = extractModelInfo(medicalNotes_train)
 
     # Convert to correct nesting
@@ -15,7 +17,8 @@ def Pipeline(fileType, hyperparameters):
     model_input_train = model_input_train.drop(["text", "answer_start"], axis=1)
 
     # Get test set aka smaller set
-    medicalNotes_test = ReturnNotes("smaller")
+    medicalNotes_test = ReturnNotes(ds_dict["test"])
+    medicalNotes_test = medicalNotes_test.sample(frac=1, random_state=seed).reset_index(drop=True)
     model_input_test = extractModelInfo(medicalNotes_test)
 
     # Convert to correct nesting
@@ -25,6 +28,9 @@ def Pipeline(fileType, hyperparameters):
 
     model_input_test = model_input_test.drop(["text", "answer_start"], axis=1)
 
+    # Include only these questions
+    model_input_train = model_input_train[(model_input_train.question == "Who is the maker of the implant?")]
+    model_input_test = model_input_test[(model_input_test.question == "Who is the maker of the implant?")]
 
     # Feature List for dataset
     featureList = datasets.Features({'id': datasets.Value('string'),
@@ -59,6 +65,7 @@ def Pipeline(fileType, hyperparameters):
         batched=True,
         remove_columns=ds["train"].column_names)
     # Convert to format useable with tensorflow
+
     train_set = tokenized_dataset["train"].with_format("numpy")[:]
 
     # Tokenize inputs for evaluation set
@@ -69,8 +76,8 @@ def Pipeline(fileType, hyperparameters):
         remove_columns=ds['test'].column_names,
     )
 
-    val_set = validation_dataset.remove_columns(["example_id", "offset_mapping"])
-    val_set = val_set["test"].with_format("numpy")[:]
+    val_set = validation_dataset["test"].remove_columns(["example_id", "offset_mapping"])
+    val_set = val_set.with_format("numpy")[:]
 
     train_dataset = tf.data.Dataset.from_tensor_slices(train_set)
     train_dataset = train_dataset.batch(32)
@@ -93,12 +100,13 @@ def Pipeline(fileType, hyperparameters):
     end_logits = outputs.end_logits
 
     # Evaluate test
-    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset, ds["train"])
+    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], ds["test"])
     print(eval_metrics)
 
     # Add ground truth labels to predictions
     for i in range(len(pred_ans)):
         pred_ans[i]["actual_text"] = act_ans[i]["answers"]["text"]
+        pred_ans[i]["Question"] = ds["train"]["question"][i]
 
 
     if hyperparameters["epochs"] == 1:
@@ -118,6 +126,11 @@ def main():
                        "max_length": 384,
                        "doc_stride": 128}
 
-    Pipeline(fileType, hyperparameters)
+    ds_dict = {"train":"larger",
+               "test":"smaller"}
+    for i in range(3,6):
+        hyperparameters["epochs"] = i
+        Pipeline(ds_dict, hyperparameters)
 
+seed = 42
 main()
