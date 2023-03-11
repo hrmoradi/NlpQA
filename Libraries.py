@@ -7,9 +7,11 @@ import datasets
 import collections
 import evaluate
 import random
+import platform
 
+from datetime import datetime
 from transformers import pipeline
-from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering
+from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras

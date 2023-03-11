@@ -1,15 +1,16 @@
 from Libraries import *
 
 
-def ReturnNotes(typeFile):
-    xlsxPath = r"C:\Users\dmlee\PycharmProjects\TKA"
+def ReturnNotes(typeFile, data_path):
+    xlsxPath = data_path
     if typeFile == "smaller":
-        xlsxFileName = r"C:\Users\dmlee\PycharmProjects\TKA\R521_27447_OP_NOTE_102.xlsx"
-        temp = pd.read_csv(r"C:\Users\dmlee\PycharmProjects\TKA\R521_27447_OP_NOTE_102_labels.csv", dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
+        xlsxFileName = r"R521_27447_OP_NOTE_102.xlsx"
+        os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv")
+        temp = pd.read_csv(os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv"), dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
 
     elif typeFile == "larger":
         xlsxFileName = "TOTAL_KNEE_ARTHROPLASTY__(27447).XLSX"  # One with over 1000
-        temp = pd.read_csv(r"C:\Users\dmlee\PycharmProjects\TKA\TOTAL_KNEE_ARTHROPLASTY__(27447)_labels.csv",
+        temp = pd.read_csv(os.path.join(data_path, r"TOTAL_KNEE_ARTHROPLASTY__(27447)_labels.csv"),
                            dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
 
     medNotes_dtypes = {"OP_NOTE": str, "AGE at CPT CODE":'Int64', "height in Inches":'Float64', "Weight in KGs":'Float64',
@@ -38,16 +39,14 @@ def ReturnNotes(typeFile):
 
 
 def extractModelInfo(Notes):
-    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Label", "Raw_Label", "Label_Start", "Raw_Label_Start"]]
+    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Label", "Raw_Label", "Label_Start"]]
 
-    # For now, replace Label with Raw_Label for PS/CR Question
-    model_input[model_input["Question"]=="What is the contraint type?"]["Label"] = \
-        model_input[model_input["Question"]=="What is the contraint type?"]["Raw_Label"]
-
-    model_input[model_input["Question"] == "What is the contraint type?"]["Label_Start"] = \
-        model_input[model_input["Question"] == "What is the contraint type?"]["Raw_Label_Start"]
-
-    model_input = model_input.drop(columns=["Raw_Label", "Raw_Label_Start"])
+    # For the constraint type question, the current label file has the ground truth CR/PS in Label
+    # But the text from OP_NOTE that was used to label it as such is located in Raw_Label
+    # So this is rewriting Label with Raw_Label for the Constraint Type question only
+    model_input.loc[model_input["Question"] == "What is the contraint type?", "Label"] = model_input.loc[
+        model_input["Question"] == "What is the contraint type?", "Raw_Label"]
+    model_input = model_input.drop(columns=["Raw_Label"])
 
     # Rename columns to ones defined in custom feature list for huggingface dataset
     model_input = model_input.rename({"pat_id": "id", "Question": "question",
@@ -61,10 +60,26 @@ def addQuestion(mod_input, questionText):
     mod_input["question"] = questionText
     return mod_input
 
-def importModelandTokenizer(modelName):
-    if modelName == "DistilBert":
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-base-cased-distilled-squad")
-        model = TFDistilBertForQuestionAnswering.from_pretrained("distilbert-base-cased-distilled-squad")
+def importModelandTokenizer(modelName, caseVer):
+    if modelName.lower() == "distilbert":
+        if caseVer == "lowercase":
+            rawName = "distilbert-base-uncased-distilled-squad"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
+        elif caseVer == "uppercase":
+            rawName = "distilbert-base-cased-distilled-squad"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
+    elif modelName.lower() == "bert":
+        if caseVer == "lowercase":
+            rawName = "bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFBertForQuestionAnswering.from_pretrained(rawName)
+        elif caseVer == "uppercase":
+            rawName = "bert-base-cased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFBertForQuestionAnswering.from_pretrained(rawName)
+
     return tokenizer, model
 
 def preprocess_function(examples, tokenizer, max_length, doc_stride):
@@ -207,3 +222,65 @@ def compute_metrics(start_logits, end_logits, features, examples, n_best=20, max
 
     return metric.compute(predictions=predicted_answers, references=theoretical_answers), predicted_answers, theoretical_answers;
 
+def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
+                        predicted_answers, execTime):
+    """
+    :param outputPath:
+        path to folder to save all files
+    :param fileName:
+        name of file to save results (csv with overall results)
+    :param n_label:
+        For now, the number of CSSRS labels.
+    :return:
+    """
+    if trainingDetails["type"] == "CV":
+        outputPath = os.path.join(outputPath, "CV", f"[{numCV} Folds]")
+    elif trainingDetails["type"] == "split":
+        outputPath = os.path.join(outputPath, "Split")
+
+    if not os.path.exists(outputPath):
+        os.makedirs(outputPath)
+
+    n_question = len(set([x["Question"] for x in predicted_answers]))
+
+    hours, minutes, seconds = str(execTime).split(":")
+    results = pd.DataFrame({"Model":modelDetails["name"], "Case":modelDetails["case"], "Training Dataset":dataset_dict["train"],
+                            "Split Type":trainingDetails["type"], "Number of Questions": n_question,
+                            "Exact Match":stats["exact_match"], "F1 Score":stats["f1"], "Execution Time": f"{hours}H{minutes}M",
+                            "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
+
+
+    if trainingDetails["type"] == "split":
+            results[f"Hyperparameters"] = str(sorted(list(hyperparameters.items()), key=lambda x: x[0][0]))
+    else:
+        for i in range(numCV):
+            results[f"Fold {i+1} Hyperparameters"] = str(sorted(list(hyperparameters[i].items()), key=lambda x: x[0][0]))
+
+
+    file_path = os.path.join(outputPath, fileName)
+
+    if not os.path.exists(file_path):
+        qid = 1
+    else:
+        temp_df = pd.read_csv(file_path)
+        qid = temp_df.iloc[-1,0] + 1
+    results["QID"] = qid
+
+
+    if trainingDetails["type"] == "split":
+            results = results[["QID", "Model", "Case", "Training Dataset", "Split Type", "Number of Questions", "Exact Match", "F1 Score",
+                               "Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]]
+
+
+    file_path = os.path.join(outputPath, fileName)
+    results.to_csv(file_path, mode="a", index=False, header = not os.path.exists(file_path))
+
+    if hyperparameters["epochs"] == 1:
+        outName = f'[{qid}] Predicted Output - {hyperparameters["epochs"]} Epoch.txt'
+    else:
+        outName = f'[{qid}]Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
+
+    with open(os.path.join(outputPath, outName), 'w') as f:
+        f.write(f"{stats}\n\n")
+        for line in predicted_answers:
+            f.write(f"{line}\n")
