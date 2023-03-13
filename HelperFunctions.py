@@ -4,7 +4,7 @@ from Libraries import *
 def ReturnNotes(typeFile, data_path):
     xlsxPath = data_path
     if typeFile == "smaller":
-        xlsxFileName = r"R521_27447_OP_NOTE_102.xlsx"
+        xlsxFileName = r"R521_27447_OP_NOTE_102.XLSX"
         os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv")
         temp = pd.read_csv(os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv"), dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
 
@@ -63,20 +63,32 @@ def addQuestion(mod_input, questionText):
 def importModelandTokenizer(modelName, caseVer):
     if modelName.lower() == "distilbert":
         if caseVer == "lowercase":
-            rawName = "distilbert-base-uncased-distilled-squad"
+            if platform.system() == "Windows":
+                rawName = "distilbert-base-uncased-distilled-squad"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/distilbert-base-uncased-distilled-squad"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
             model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
         elif caseVer == "uppercase":
-            rawName = "distilbert-base-cased-distilled-squad"
+            if platform.system() == "Windows":
+                rawName = "distilbert-base-cased-distilled-squad"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/distilbert-base-cased-distilled-squad"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
             model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
     elif modelName.lower() == "bert":
         if caseVer == "lowercase":
-            rawName = "bert-base-uncased"
+            if platform.system() == "Windows":
+                rawName = "bert-base-uncased"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/bert-base-uncased"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
             model = TFBertForQuestionAnswering.from_pretrained(rawName)
         elif caseVer == "uppercase":
-            rawName = "bert-base-cased"
+            if platform.system() == "Windows":
+                rawName = "bert-base-cased"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/bert-base-cased"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
             model = TFBertForQuestionAnswering.from_pretrained(rawName)
 

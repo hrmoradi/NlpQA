@@ -15,6 +15,7 @@ from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, 
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
+from keras import backend as K
 
 seed = 99
 # os.environ['PYTHONHASHSEED'] = str(seed)

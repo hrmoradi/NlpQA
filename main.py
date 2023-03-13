@@ -171,12 +171,18 @@ def main():
 
     modelsList = ["distilbert", "bert"]
     caseList = ["lowercase", "uppercase"]
-    for modelToRun in modelsList:
-        for caseToRun in caseList:
-            modelDetails["name"] = modelToRun
-            modelDetails["case"] = caseToRun
-
-            Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+    for i in range(1, 5):
+        hyperparameters["epochs"] = i
+        for modelToRun in modelsList:
+            for caseToRun in caseList:
+                modelDetails["name"] = modelToRun
+                modelDetails["case"] = caseToRun
+                if modelToRun == "bert":
+                    hyperparameters["batch_size"] = 4
+                elif modelToRun == "distilbert":
+                    hyperparameters["batch_size"] = 16
+                Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+                K.clear_session()
 
 
 if platform.system() == "Windows":
