@@ -56,9 +56,27 @@ def extractModelInfo(Notes):
     model_input = model_input.dropna(subset=["text"], axis=0)
     return model_input
 
-def addQuestion(mod_input, questionText):
-    mod_input["question"] = questionText
-    return mod_input
+# def stratifyOver(toStratOver):
+#     if toStratOver == "questions":
+#
+
+def changeOPNote(rawText):
+    if re.search(r"(post stabilized)", rawText, re.IGNORECASE):
+        compiled = re.compile(r"post stabilized", re.IGNORECASE)
+        rawText = compiled.sub("posterior stabilized", rawText)
+    #         rawText = re.sub("post stabilized", "posterior stabilized", rawText, flags=re.IGNORECASE)
+
+    if re.search(r"(\bps\b)", rawText, re.IGNORECASE):
+        compiled = re.compile(r"\bps\b", re.IGNORECASE)
+        rawText = compiled.sub("posterior stabilized", rawText)
+    #         rawText = re.sub("\bps\b", "posterior stabilized", rawText, flags=re.IGNORECASE)
+
+    if re.search(r"(\bcr\b)", rawText, re.IGNORECASE):
+        compiled = re.compile(r"\bcr\b", re.IGNORECASE)
+        rawText = compiled.sub("cruciate retaining", rawText)
+    #         rawText = re.sub("\bcr\b", "cruciate retaining", rawText, flags=re.IGNORECASE)
+
+    return rawText
 
 def importModelandTokenizer(modelName, caseVer):
     if modelName.lower() == "distilbert":
@@ -178,7 +196,8 @@ def preprocess_validation_examples(examples, tokenizer, max_length, doc_stride):
     inputs["example_id"] = example_ids
     return inputs
 
-def compute_metrics(start_logits, end_logits, features, examples, n_best=20, max_answer_length = 30):
+
+def compute_metrics(start_logits, end_logits, features, examples, question_dict, n_best=20, max_answer_length=30):
     metric = evaluate.load("squad")
     example_to_features = collections.defaultdict(list)
     for idx, feature in enumerate(features):
@@ -196,8 +215,8 @@ def compute_metrics(start_logits, end_logits, features, examples, n_best=20, max
             end_logit = end_logits[feature_index]
             offsets = features[feature_index]["offset_mapping"]
 
-            start_indexes = np.argsort(start_logit)[-1 : -n_best - 1 : -1].tolist()
-            end_indexes = np.argsort(end_logit)[-1 : -n_best - 1 : -1].tolist()
+            start_indexes = np.argsort(start_logit)[-1: -n_best - 1: -1].tolist()
+            end_indexes = np.argsort(end_logit)[-1: -n_best - 1: -1].tolist()
             for start_index in start_indexes:
                 for end_index in end_indexes:
                     # Skip answers that are not fully in the context
@@ -205,13 +224,13 @@ def compute_metrics(start_logits, end_logits, features, examples, n_best=20, max
                         continue
                     # Skip answers with a length that is either < 0 or > max_answer_length
                     if (
-                        end_index < start_index
-                        or end_index - start_index + 1 > max_answer_length
+                            end_index < start_index
+                            or end_index - start_index + 1 > max_answer_length
                     ):
                         continue
 
                     answer = {
-                        "text": context[offsets[start_index][0] : offsets[end_index][1]],
+                        "text": context[offsets[start_index][0]: offsets[end_index][1]],
                         "logit_score": start_logit[start_index] + end_logit[end_index],
                     }
                     answers.append(answer)
@@ -225,17 +244,28 @@ def compute_metrics(start_logits, end_logits, features, examples, n_best=20, max
         else:
             predicted_answers.append({"id": example_id, "prediction_text": ""})
 
-
     theoretical_answers = [{"id": ex["id"], "answers": ex["answers"]} for ex in examples]
+
     ## Convert predicted and ground truth labels to lowercase prior to metric calculation
     for i in range(len(predicted_answers)):
         predicted_answers[i]["prediction_text"] = predicted_answers[i]["prediction_text"].lower()
         theoretical_answers[i]["answers"]["text"] = [theoretical_answers[i]["answers"]["text"][0].lower()]
 
-    return metric.compute(predictions=predicted_answers, references=theoretical_answers), predicted_answers, theoretical_answers;
+    result_dict = {}
+
+    result_dict["overall"] = metric.compute(predictions=predicted_answers, references=theoretical_answers)
+
+    for i in range(len(question_dict)):
+        list_idx = [j for j in range(len(examples)) if examples["question"][j] == question_dict[i]]
+        sub_pred = [predicted_answers[k] for k in list_idx]
+        sub_theo = [theoretical_answers[k] for k in list_idx]
+        result_dict[question_dict[i]] = metric.compute(predictions=sub_pred, references=sub_theo)
+
+    return result_dict, predicted_answers, theoretical_answers;
+
 
 def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
-                        predicted_answers, execTime):
+                        predicted_answers, execTime, question_dict):
     """
     :param outputPath:
         path to folder to save all files
@@ -245,29 +275,42 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         For now, the number of CSSRS labels.
     :return:
     """
+
+    n_question = len(set([x["Question"] for x in predicted_answers]))
+
     if trainingDetails["type"] == "CV":
-        outputPath = os.path.join(outputPath, "CV", f"[{numCV} Folds]")
+        outputPath = os.path.join(outputPath, "CV", f"[{numCV} Folds]", f"[{n_question} Questions]")
     elif trainingDetails["type"] == "split":
-        outputPath = os.path.join(outputPath, "Split")
+        outputPath = os.path.join(outputPath, "Split", f"[{n_question} Questions]")
 
     if not os.path.exists(outputPath):
         os.makedirs(outputPath)
 
-    n_question = len(set([x["Question"] for x in predicted_answers]))
-
     hours, minutes, seconds = str(execTime).split(":")
-    results = pd.DataFrame({"Model":modelDetails["name"], "Case":modelDetails["case"], "Training Dataset":dataset_dict["train"],
-                            "Split Type":trainingDetails["type"], "Number of Questions": n_question,
-                            "Exact Match":stats["exact_match"], "F1 Score":stats["f1"], "Execution Time": f"{hours}H{minutes}M",
-                            "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
-
+    results = pd.DataFrame(
+        {"Model": modelDetails["name"], "Case": modelDetails["case"], "Training Dataset": dataset_dict["train"],
+         "Split Type": trainingDetails["type"], "Number of Questions": n_question,
+         "Overall Exact Match": stats['overall']["exact_match"], "Overall F1 Score": stats['overall']["f1"],
+         "Execution Time": f"{hours}H{minutes}M",
+         "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
 
     if trainingDetails["type"] == "split":
-            results[f"Hyperparameters"] = str(sorted(list(hyperparameters.items()), key=lambda x: x[0][0]))
+        results[f"Hyperparameters"] = str(sorted(list(hyperparameters.items()), key=lambda x: x[0][0]))
     else:
         for i in range(numCV):
-            results[f"Fold {i+1} Hyperparameters"] = str(sorted(list(hyperparameters[i].items()), key=lambda x: x[0][0]))
+            results[f"Fold {i + 1} Hyperparameters"] = str(
+                sorted(list(hyperparameters[i].items()), key=lambda x: x[0][0]))
 
+    list_questions = list(question_dict.values())
+    results["Questions"] = str(list_questions)
+
+    list_between = []
+    for i in range(len(list_questions)):
+        results[f"Q{i + 1} Exact Match"] = stats[list_questions[i]]["exact_match"]
+        results[f"Q{i + 1} F1 Score"] = stats[list_questions[i]]["f1"]
+
+        list_between.append(f"Q{i + 1} Exact Match")
+        list_between.append(f"Q{i + 1} F1 Score")
 
     file_path = os.path.join(outputPath, fileName)
 
@@ -275,17 +318,19 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         qid = 1
     else:
         temp_df = pd.read_csv(file_path)
-        qid = temp_df.iloc[-1,0] + 1
+        qid = temp_df.iloc[-1, 0] + 1
     results["QID"] = qid
 
-
     if trainingDetails["type"] == "split":
-            results = results[["QID", "Model", "Case", "Training Dataset", "Split Type", "Number of Questions", "Exact Match", "F1 Score",
-                               "Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]]
+        list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Number of Questions", "Questions",
+                       "Overall Exact Match", "Overall F1 Score"]
 
+        list_after = ["Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]
+
+        results = results[list_before + list_between + list_after]
 
     file_path = os.path.join(outputPath, fileName)
-    results.to_csv(file_path, mode="a", index=False, header = not os.path.exists(file_path))
+    results.to_csv(file_path, mode="a", index=False, header=not os.path.exists(file_path))
 
     if hyperparameters["epochs"] == 1:
         outName = f'[{qid}] Predicted Output - {hyperparameters["epochs"]} Epoch.txt'
@@ -293,6 +338,9 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         outName = f'[{qid}]Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
 
     with open(os.path.join(outputPath, outName), 'w') as f:
-        f.write(f"{stats}\n\n")
+        for key, value in stats.items():
+            f.write(f"{key, value}\n")
+
+        f.write("\n\n")
         for line in predicted_answers:
             f.write(f"{line}\n")

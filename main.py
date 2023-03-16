@@ -1,6 +1,6 @@
 from Libraries import *
 
-from HelperFunctions import ReturnNotes, extractModelInfo, addQuestion, importModelandTokenizer, preprocess_function,\
+from HelperFunctions import ReturnNotes, extractModelInfo, changeOPNote, importModelandTokenizer, preprocess_function,\
     preprocess_validation_examples, compute_metrics, printOverallResults
 
 
@@ -9,6 +9,9 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
 
     # Get train set
     medicalNotes_train = ReturnNotes(ds_dict["train"], dataPath)
+
+    # Change appropriate strings such as 'cr' to 'cruciate retaining' to match labels
+    medicalNotes_train["OP_NOTE"] = medicalNotes_train["OP_NOTE"].apply(lambda x: changeOPNote(x))
     medicalNotes_train = medicalNotes_train.sample(frac=1, random_state=seed).reset_index(drop=True)
     model_input_train = extractModelInfo(medicalNotes_train)
 
@@ -32,11 +35,15 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     model_input_train = model_input_train.drop(["text", "answer_start"], axis=1)
     # model_input_test = model_input_test.drop(["text", "answer_start"], axis=1)
 
+
+
     # Create new column question_id that maps to an integer to stratify over
     list_ques = model_input_train["question"].unique().tolist()
+    # list_ques = model_input_train["question"].unique().tolist()
+
     num_ques = len(list_ques)
     ques_conv_dict = {list_ques[ques_idx]: ques_idx for ques_idx in range(len(list_ques))}
-    ques_conv_dict
+    inverse_question_dict = {value: key for key, value in ques_conv_dict.items()}
 
     model_input_train["question_id"] = model_input_train["question"].apply(lambda x: ques_conv_dict[x])
     model_input_train
@@ -130,7 +137,8 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     end_logits = outputs.end_logits
 
     # Evaluate test
-    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], ds["test"])
+    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], ds["test"],
+                                                      inverse_question_dict)
     print(eval_metrics)
 
     # Add ground truth labels to predictions
@@ -142,7 +150,7 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     elapsedTime = endTime - startTime
     printOverallResults(outputPath=outputPath, fileName="OverallResults.csv", modelDetails=modelInfo, dataset_dict = ds_dict,
                         trainingDetails=trainingDetails, hyperparameters=hyperparameters,stats=eval_metrics,
-                        predicted_answers=pred_ans, execTime=elapsedTime)
+                        predicted_answers=pred_ans, execTime=elapsedTime, question_dict=inverse_question_dict)
 
 
 
@@ -154,35 +162,43 @@ def main():
         outputPath = r"/home/dmlee/QA/results"
 
 
-    fileType = "larger"
+    outputPath = os.path.join(outputPath, "16_03_23")
+    if not os.path.exists(outputPath):
+        os.mkdir(outputPath)
+
+
     modelDetails = {"name":"distilbert",
                     "case":"lowercase"}
 
     trainDetails = {"type":"split"}
 
-    hyperparameters = {"epochs": 5,
+    hyperparameters = {"epochs": 1,
                        "max_length": 384,
                        "doc_stride": 128,
                        "batch_size": 32,
-                       "learning_rate":5e-5}
+                       "learning_rate":3e-5}
 
-    ds_dict = {"train":"larger",
+    ds_dict = {"train":"smaller",
                "test":"smaller"}
+
+
+    Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+    K.clear_session()
 
     modelsList = ["distilbert", "bert"]
     caseList = ["lowercase", "uppercase"]
-    for i in range(1, 5):
-        hyperparameters["epochs"] = i
-        for modelToRun in modelsList:
-            for caseToRun in caseList:
-                modelDetails["name"] = modelToRun
-                modelDetails["case"] = caseToRun
-                if modelToRun == "bert":
-                    hyperparameters["batch_size"] = 4
-                elif modelToRun == "distilbert":
-                    hyperparameters["batch_size"] = 16
-                Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
-                K.clear_session()
+    # for i in range(1, 5):
+    #     hyperparameters["epochs"] = i
+    #     for modelToRun in modelsList:
+    #         for caseToRun in caseList:
+    #             modelDetails["name"] = modelToRun
+    #             modelDetails["case"] = caseToRun
+    #             if modelToRun == "bert":
+    #                 hyperparameters["batch_size"] = 4
+    #             elif modelToRun == "distilbert":
+    #                 hyperparameters["batch_size"] = 16
+    #             Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+    #             K.clear_session()
 
 
 if platform.system() == "Windows":
