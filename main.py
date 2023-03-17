@@ -15,26 +15,15 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     medicalNotes_train = medicalNotes_train.sample(frac=1, random_state=seed).reset_index(drop=True)
     model_input_train = extractModelInfo(medicalNotes_train)
 
-    # # Get test set
-    # medicalNotes_test = ReturnNotes(ds_dict["test"])
-    # medicalNotes_test = medicalNotes_test.sample(frac=1, random_state=seed).reset_index(drop=True)
-    # model_input_test = extractModelInfo(medicalNotes_test)
-
     if modelInfo["case"] == "lowercase":
         model_input_train[["question", "context", "text"]] = model_input_train[["question", "context", "text"]].astype(str).apply(lambda col: col.str.lower())
-        # model_input_test[["question", "context", "text"]] = model_input_test[["question", "context", "text"]].astype(str).apply(lambda col: col.str.lower())
 
     # Convert to correct nesting
     model_input_train["answers"] = model_input_train.apply(lambda x: {"text": [x["text"]], "answer_start": [x["answer_start"]]},
                                                            axis=1)
 
-    # model_input_test["answers"] = model_input_test.apply(lambda x: {"text": [x["text"]], "answer_start": [x["answer_start"]]},
-    #                                                      axis=1)
-
     # Drop unncessary columns
     model_input_train = model_input_train.drop(["text", "answer_start"], axis=1)
-    # model_input_test = model_input_test.drop(["text", "answer_start"], axis=1)
-
 
 
     # Create new column question_id that maps to an integer to stratify over
@@ -50,7 +39,6 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
 
     # # Include only these questions
     # model_input_train = model_input_train[(model_input_train.question == "who is the maker of the implant?")]
-    # model_input_test = model_input_test[(model_input_test.question == "who is the maker of the implant?")]
 
     # Feature List for dataset
     featureList = datasets.Features({'id': datasets.Value('string'),
@@ -207,5 +195,4 @@ if platform.system() == "Windows":
 elif platform.system() == "Linux":
     dataPath = r"/home/dmlee/TKA"
 
-seed = 42
 main()

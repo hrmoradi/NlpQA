@@ -44,8 +44,8 @@ def extractModelInfo(Notes):
     # For the constraint type question, the current label file has the ground truth CR/PS in Label
     # But the text from OP_NOTE that was used to label it as such is located in Raw_Label
     # So this is rewriting Label with Raw_Label for the Constraint Type question only
-    model_input.loc[model_input["Question"] == "What is the contraint type?", "Label"] = model_input.loc[
-        model_input["Question"] == "What is the contraint type?", "Raw_Label"]
+    model_input.loc[model_input["Question"] == "What is the constraint type?", "Label"] = model_input.loc[
+        model_input["Question"] == "What is the constraint type?", "Raw_Label"]
     model_input = model_input.drop(columns=["Raw_Label"])
 
     # Rename columns to ones defined in custom feature list for huggingface dataset
@@ -336,6 +336,9 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         outName = f'[{qid}] Predicted Output - {hyperparameters["epochs"]} Epoch.txt'
     else:
         outName = f'[{qid}]Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
+
+    # Sort predicted answers in alphabetical order in order of Question then ground truth label
+    predicted_answers = sorted(predicted_answers, key=lambda x: (x["Question"], x["actual_text"][0]))
 
     with open(os.path.join(outputPath, outName), 'w') as f:
         for key, value in stats.items():
