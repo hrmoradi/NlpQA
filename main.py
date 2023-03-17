@@ -25,49 +25,86 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     # Drop unncessary columns
     model_input_train = model_input_train.drop(["text", "answer_start"], axis=1)
 
-
-    # Create new column question_id that maps to an integer to stratify over
-    list_ques = model_input_train["question"].unique().tolist()
-    # list_ques = model_input_train["question"].unique().tolist()
-
-    num_ques = len(list_ques)
-    ques_conv_dict = {list_ques[ques_idx]: ques_idx for ques_idx in range(len(list_ques))}
-    inverse_question_dict = {value: key for key, value in ques_conv_dict.items()}
-
-    model_input_train["question_id"] = model_input_train["question"].apply(lambda x: ques_conv_dict[x])
-    model_input_train
-
     # # Include only these questions
     # model_input_train = model_input_train[(model_input_train.question == "who is the maker of the implant?")]
+    # model_input_train = model_input_train[(model_input_train.question == "what is the constraint type?")]
+    # model_input_train = model_input_train[(model_input_train.question == "who is the laterality?")]
 
-    # Feature List for dataset
-    featureList = datasets.Features({'id': datasets.Value('string'),
-                                     'context': datasets.Value('string'),
-                                     'question': datasets.Value('string'),
-                                     'question_id': datasets.ClassLabel(num_classes=num_ques,
-                                                                        names=list(range(num_ques))),
-                                     'answers': datasets.Sequence(feature={'text': datasets.Value(dtype='string'),
-                                                                           'answer_start': datasets.Value(
-                                                                               dtype='int32')})})
+    # Get List of Questions
+    list_ques = model_input_train["question"].unique().tolist()
+
+    num_ques = len(list_ques)
+    question_dict = {list_ques[ques_idx]: ques_idx for ques_idx in range(len(list_ques))}
+    inverse_question_dict = {value: key for key, value in question_dict.items()}
+
+    if trainingDetails["strat_on"] == "question" or trainingDetails["strat_on"] == "questions":
+        num_strat_classes = num_ques
+        model_input_train["strat_id"] = model_input_train["question"].apply(lambda x: question_dict[x])
+    elif trainingDetails["strat_on"] == "answer" or trainingDetails["strat_on"] == "answers":
+
+        list_ans = model_input_train["answers"].apply(lambda x: x["text"][0]).unique().tolist()
+
+        num_ans = len(list_ans)
+        num_strat_classes = num_ans
+
+        answer_dict = {list_ans[ans_idx]: ans_idx for ans_idx in range(len(list_ans))}
+        inverse_answer_dict = {value: key for key, value in answer_dict.items()}
+        model_input_train["strat_id"] = model_input_train["answers"].apply(lambda x: answer_dict[x["text"][0]])
+
+    if trainingDetails["strat_on"] != "none":
+        # Feature List for dataset
+        featureList = datasets.Features({'id': datasets.Value('string'),
+                                         'context': datasets.Value('string'),
+                                         'question': datasets.Value('string'),
+                                         'strat_id': datasets.ClassLabel(num_classes=num_strat_classes,
+                                                                            names=list(range(num_strat_classes))),
+                                         'answers': datasets.Sequence(feature={'text': datasets.Value(dtype='string'),
+                                                                               'answer_start': datasets.Value(
+                                                                                   dtype='int32')})})
 
 
-    ## Convert to huggingface dataset
-    ds = datasets.DatasetDict()
-    # Train
-    train_ds = datasets.Dataset.from_pandas(model_input_train, split='train', features=featureList, preserve_index=False)
-    ds['train'] = train_ds
+        ## Convert to huggingface dataset
+        ds = datasets.DatasetDict()
+        # Train
+        train_ds = datasets.Dataset.from_pandas(model_input_train, split='train', features=featureList, preserve_index=False)
+        ds['train'] = train_ds
 
-    # Split dataset into train/test 60/40 split
-    ds = ds["train"].train_test_split(test_size=0.4, stratify_by_column="question_id", shuffle=True, seed=seed)
+        # Split dataset into train/test 60/40 split
+        ds = ds["train"].train_test_split(test_size=0.4, stratify_by_column="strat_id", shuffle=True, seed=seed)
 
-    # Split test_set into test/val 50/50 to an overall 60/20/20 split
-    # Must do it through intermediary DatasetDict
-    val_test_split = ds["test"].train_test_split(test_size=0.5, stratify_by_column="question_id", shuffle=True,seed=seed)
-    ds["test"] = val_test_split["train"]
-    ds["val"] = val_test_split["test"]
+        # Split test_set into test/val 50/50 to an overall 60/20/20 split
+        # Must do it through intermediary DatasetDict
+        val_test_split = ds["test"].train_test_split(test_size=0.5, stratify_by_column="strat_id", shuffle=True,seed=seed)
+        ds["test"] = val_test_split["train"]
+        ds["val"] = val_test_split["test"]
 
-    # Remove question_id column/feature
-    ds = ds.remove_columns("question_id")
+        # Remove question_id column/feature
+        ds = ds.remove_columns("strat_id")
+    else:
+        # Feature List for dataset
+        featureList = datasets.Features({'id': datasets.Value('string'),
+                                         'context': datasets.Value('string'),
+                                         'question': datasets.Value('string'),
+                                         'answers': datasets.Sequence(feature={'text': datasets.Value(dtype='string'),
+                                                                               'answer_start': datasets.Value(
+                                                                                   dtype='int32')})})
+
+        ## Convert to huggingface dataset
+        ds = datasets.DatasetDict()
+        # Train
+        train_ds = datasets.Dataset.from_pandas(model_input_train, split='train', features=featureList,
+                                                preserve_index=False)
+        ds['train'] = train_ds
+
+        # Split dataset into train/test 60/40 split
+        ds = ds["train"].train_test_split(test_size=0.4, shuffle=True, seed=seed)
+
+        # Split test_set into test/val 50/50 to an overall 60/20/20 split
+        # Must do it through intermediary DatasetDict
+        val_test_split = ds["test"].train_test_split(test_size=0.5, shuffle=True, seed=seed)
+        ds["test"] = val_test_split["train"]
+        ds["val"] = val_test_split["test"]
+
 
     # Import tokenizer and model
     tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
@@ -150,7 +187,7 @@ def main():
         outputPath = r"/home/dmlee/QA/results"
 
 
-    outputPath = os.path.join(outputPath, "16_03_23")
+    outputPath = os.path.join(outputPath, "17_03_23")
     if not os.path.exists(outputPath):
         os.mkdir(outputPath)
 
@@ -158,35 +195,39 @@ def main():
     modelDetails = {"name":"distilbert",
                     "case":"lowercase"}
 
-    trainDetails = {"type":"split"}
+    trainDetails = {"type":"split",
+                    "strat_on":"none"}
 
     hyperparameters = {"epochs": 1,
                        "max_length": 384,
                        "doc_stride": 128,
-                       "batch_size": 32,
+                       "batch_size": 16,
                        "learning_rate":3e-5}
 
     ds_dict = {"train":"smaller",
                "test":"smaller"}
 
+    def runLoop():
+        modelsList = ["distilbert", "bert"]
+        caseList = ["lowercase", "uppercase"]
+        for i in range(1, 5):
+            hyperparameters["epochs"] = i
+            for modelToRun in modelsList:
+                for caseToRun in caseList:
+                    modelDetails["name"] = modelToRun
+                    modelDetails["case"] = caseToRun
+                    if modelToRun == "bert":
+                        hyperparameters["batch_size"] = 4
+                    elif modelToRun == "distilbert":
+                        hyperparameters["batch_size"] = 16
+                    Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+                    K.clear_session()
+
 
     Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
     K.clear_session()
 
-    modelsList = ["distilbert", "bert"]
-    caseList = ["lowercase", "uppercase"]
-    # for i in range(1, 5):
-    #     hyperparameters["epochs"] = i
-    #     for modelToRun in modelsList:
-    #         for caseToRun in caseList:
-    #             modelDetails["name"] = modelToRun
-    #             modelDetails["case"] = caseToRun
-    #             if modelToRun == "bert":
-    #                 hyperparameters["batch_size"] = 4
-    #             elif modelToRun == "distilbert":
-    #                 hyperparameters["batch_size"] = 16
-    #             Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
-    #             K.clear_session()
+    #runLoop()
 
 
 if platform.system() == "Windows":

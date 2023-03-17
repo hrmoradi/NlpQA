@@ -289,7 +289,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     hours, minutes, seconds = str(execTime).split(":")
     results = pd.DataFrame(
         {"Model": modelDetails["name"], "Case": modelDetails["case"], "Training Dataset": dataset_dict["train"],
-         "Split Type": trainingDetails["type"], "Number of Questions": n_question,
+         "Split Type": trainingDetails["type"], "Stratification":trainingDetails["strat_on"],"Number of Questions": n_question,
          "Overall Exact Match": stats['overall']["exact_match"], "Overall F1 Score": stats['overall']["f1"],
          "Execution Time": f"{hours}H{minutes}M",
          "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
@@ -322,8 +322,8 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     results["QID"] = qid
 
     if trainingDetails["type"] == "split":
-        list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Number of Questions", "Questions",
-                       "Overall Exact Match", "Overall F1 Score"]
+        list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Stratification", "Number of Questions",
+                       "Questions", "Overall Exact Match", "Overall F1 Score"]
 
         list_after = ["Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]
 
