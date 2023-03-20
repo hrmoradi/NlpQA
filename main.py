@@ -31,11 +31,13 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     # model_input_train = model_input_train[(model_input_train.question == "who is the laterality?")]
 
     # Get List of Questions
-    list_ques = model_input_train["question"].unique().tolist()
+    list_ques = sorted(model_input_train["question"].unique().tolist())
 
     num_ques = len(list_ques)
     question_dict = {list_ques[ques_idx]: ques_idx for ques_idx in range(len(list_ques))}
     inverse_question_dict = {value: key for key, value in question_dict.items()}
+
+
 
     if trainingDetails["strat_on"] == "question" or trainingDetails["strat_on"] == "questions":
         num_strat_classes = num_ques
@@ -163,7 +165,7 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
 
     # Evaluate test
     eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], ds["test"],
-                                                      inverse_question_dict)
+                                                      list_ques)
     print(eval_metrics)
 
     # Add ground truth labels to predictions
@@ -175,7 +177,7 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     elapsedTime = endTime - startTime
     printOverallResults(outputPath=outputPath, fileName="OverallResults.csv", modelDetails=modelInfo, dataset_dict = ds_dict,
                         trainingDetails=trainingDetails, hyperparameters=hyperparameters,stats=eval_metrics,
-                        predicted_answers=pred_ans, execTime=elapsedTime, question_dict=inverse_question_dict)
+                        predicted_answers=pred_ans, execTime=elapsedTime, list_questions=list_ques)
 
 
 
@@ -187,12 +189,12 @@ def main():
         outputPath = r"/home/dmlee/QA/results"
 
 
-    outputPath = os.path.join(outputPath, "17_03_23")
+    outputPath = os.path.join(outputPath, "20_03_23")
     if not os.path.exists(outputPath):
         os.mkdir(outputPath)
 
 
-    modelDetails = {"name":"distilbert",
+    modelDetails = {"name":"gptj",
                     "case":"lowercase"}
 
     trainDetails = {"type":"split",

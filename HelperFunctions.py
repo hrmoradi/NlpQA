@@ -5,7 +5,6 @@ def ReturnNotes(typeFile, data_path):
     xlsxPath = data_path
     if typeFile == "smaller":
         xlsxFileName = r"R521_27447_OP_NOTE_102.XLSX"
-        os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv")
         temp = pd.read_csv(os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv"), dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
 
     elif typeFile == "larger":
@@ -26,11 +25,6 @@ def ReturnNotes(typeFile, data_path):
 
     # Remove any whitespaces that have more than one in a row
     medicalNotes["OP_NOTE"] = medicalNotes["OP_NOTE"].apply(lambda x: " ".join(x.split()))
-
-    #     if fileType == "larger":
-    #     medicalNotes.iloc[389]["OP_NOTE"] = medicalNotes.iloc[389]["OP_NOTE"] + medicalNotes.iloc[390]["pat_id"]
-    #     medicalNotes.iloc[806]["OP_NOTE"] = medicalNotes.iloc[806]["OP_NOTE"] + medicalNotes.iloc[807]["pat_id"]
-    #     medicalNotes = medicalNotes.drop(index=[390, 807], axis=0)
 
     # Read in labels and combine with medical notes
     temp["CPT Code Date"] = pd.to_datetime(temp["CPT Code Date"])
@@ -109,6 +103,36 @@ def importModelandTokenizer(modelName, caseVer):
                 rawName = r"/home/dmlee/[models]/bert-base-cased"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
             model = TFBertForQuestionAnswering.from_pretrained(rawName)
+
+    elif modelName.lower() == "biobert":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "dmis-lab/biobert-v1.1"
+            elif platform.system() == "Linux":
+                rawName = "dmis-lab/biobert-v1.1"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFBertForQuestionAnswering.from_pretrained(rawName, from_pt=True)
+
+    elif modelName.lower() == "clinicalbert":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "emilyalsentzer/Bio_ClinicalBERT"
+            elif platform.system() == "Linux":
+                rawName = "emilyalsentzer/Bio_ClinicalBERT"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFBertForQuestionAnswering.from_pretrained(rawName, from_pt=True)
+
+    elif modelName.lower() == "gptj":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "EleutherAI/gpt-j-6B"
+            elif platform.system() == "Linux":
+                rawName = "EleutherAI/gpt-j-6B"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+            model = TFGPTJForQuestionAnswering.from_pretrained(rawName, from_pt=True)
 
     return tokenizer, model
 
@@ -197,7 +221,7 @@ def preprocess_validation_examples(examples, tokenizer, max_length, doc_stride):
     return inputs
 
 
-def compute_metrics(start_logits, end_logits, features, examples, question_dict, n_best=20, max_answer_length=30):
+def compute_metrics(start_logits, end_logits, features, examples, list_questions, n_best=20, max_answer_length=30):
     metric = evaluate.load("squad")
     example_to_features = collections.defaultdict(list)
     for idx, feature in enumerate(features):
@@ -255,17 +279,17 @@ def compute_metrics(start_logits, end_logits, features, examples, question_dict,
 
     result_dict["overall"] = metric.compute(predictions=predicted_answers, references=theoretical_answers)
 
-    for i in range(len(question_dict)):
-        list_idx = [j for j in range(len(examples)) if examples["question"][j] == question_dict[i]]
+    for i in range(len(list_questions)):
+        list_idx = [j for j in range(len(examples)) if examples["question"][j] == list_questions[i]]
         sub_pred = [predicted_answers[k] for k in list_idx]
         sub_theo = [theoretical_answers[k] for k in list_idx]
-        result_dict[question_dict[i]] = metric.compute(predictions=sub_pred, references=sub_theo)
+        result_dict[list_questions[i]] = metric.compute(predictions=sub_pred, references=sub_theo)
 
     return result_dict, predicted_answers, theoretical_answers;
 
 
 def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
-                        predicted_answers, execTime, question_dict):
+                        predicted_answers, execTime, list_questions):
     """
     :param outputPath:
         path to folder to save all files
@@ -301,7 +325,6 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
             results[f"Fold {i + 1} Hyperparameters"] = str(
                 sorted(list(hyperparameters[i].items()), key=lambda x: x[0][0]))
 
-    list_questions = list(question_dict.values())
     results["Questions"] = str(list_questions)
 
     list_between = []
@@ -338,7 +361,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         outName = f'[{qid}]Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
 
     # Sort predicted answers in alphabetical order in order of Question then ground truth label
-    predicted_answers = sorted(predicted_answers, key=lambda x: (x["Question"], x["actual_text"][0]))
+    predicted_answers = sorted(predicted_answers, key=lambda x: (x["Question"], x["actual_text"][0], x["id"]))
 
     with open(os.path.join(outputPath, outName), 'w') as f:
         for key, value in stats.items():

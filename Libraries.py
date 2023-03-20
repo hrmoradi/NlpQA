@@ -12,11 +12,12 @@ import re
 
 from datetime import datetime
 from transformers import pipeline
-from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering
+from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering,  TFGPTJForQuestionAnswering
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
 from keras import backend as K
+import torch
 
 seed = 99
 # os.environ['PYTHONHASHSEED'] = str(seed)
