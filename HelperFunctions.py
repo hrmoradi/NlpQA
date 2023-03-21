@@ -276,9 +276,10 @@ def compute_metrics(start_logits, end_logits, features, examples, list_questions
         theoretical_answers[i]["answers"]["text"] = [theoretical_answers[i]["answers"]["text"][0].lower()]
 
     result_dict = {}
-
     result_dict["overall"] = metric.compute(predictions=predicted_answers, references=theoretical_answers)
 
+    # Only iterate over the questions present in this batch
+    list_questions = [question for question in list_questions if question in examples["question"]]
     for i in range(len(list_questions)):
         list_idx = [j for j in range(len(examples)) if examples["question"][j] == list_questions[i]]
         sub_pred = [predicted_answers[k] for k in list_idx]
@@ -289,7 +290,7 @@ def compute_metrics(start_logits, end_logits, features, examples, list_questions
 
 
 def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
-                        predicted_answers, execTime, list_questions):
+                        predicted_answers, execTime, list_questions, test_num_samples):
     """
     :param outputPath:
         path to folder to save all files
@@ -313,7 +314,8 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     hours, minutes, seconds = str(execTime).split(":")
     results = pd.DataFrame(
         {"Model": modelDetails["name"], "Case": modelDetails["case"], "Training Dataset": dataset_dict["train"],
-         "Split Type": trainingDetails["type"], "Stratification":trainingDetails["strat_on"],"Number of Questions": n_question,
+         "Split Type": trainingDetails["type"], "Stratification":trainingDetails["strat_on"], "Oversample":trainingDetails["oversample"],
+         "Number of Questions": n_question, "Questions Per Model":trainingDetails["model_split"],
          "Overall Exact Match": stats['overall']["exact_match"], "Overall F1 Score": stats['overall']["f1"],
          "Execution Time": f"{hours}H{minutes}M",
          "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
@@ -345,8 +347,9 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     results["QID"] = qid
 
     if trainingDetails["type"] == "split":
-        list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Stratification", "Number of Questions",
-                       "Questions", "Overall Exact Match", "Overall F1 Score"]
+        list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Stratification", "Oversample",
+                       "Number of Questions", "Questions Per Model", "Questions",
+                       "Overall Exact Match", "Overall F1 Score"]
 
         list_after = ["Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]
 
@@ -364,9 +367,14 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     predicted_answers = sorted(predicted_answers, key=lambda x: (x["Question"], x["actual_text"][0], x["id"]))
 
     with open(os.path.join(outputPath, outName), 'w') as f:
+        f.write(f"{'overall', stats['overall'], test_num_samples['overall']}\n")
         for key, value in stats.items():
-            f.write(f"{key, value}\n")
-
+            if key != "overall":
+                f.write(f"{key, value, test_num_samples[key]}\n")
+        if trainingDetails["model_split"] == "all":
+            f.write(f"One model for all questions\n")
+        elif trainingDetails["model_split"] == "one":
+            f.write(f"One model for each question\n")
         f.write("\n\n")
         for line in predicted_answers:
             f.write(f"{line}\n")

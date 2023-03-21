@@ -4,6 +4,67 @@ from HelperFunctions import ReturnNotes, extractModelInfo, changeOPNote, importM
     preprocess_validation_examples, compute_metrics, printOverallResults
 
 
+def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails, hyperparameters):
+    # Import tokenizer and model
+    tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
+
+    # The maximum length of a feature (question and context)
+    max_length = hyperparameters["max_length"]
+    # The authorized overlap between two part of the context when splitting
+    doc_stride = hyperparameters["doc_stride"]
+
+    # Tokenize inputs for training
+    tokenized_dataset = data_ds.map(
+        preprocess_function,
+        fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
+        batched=True,
+        remove_columns=data_ds["train"].column_names)
+
+    # Convert to format useable with tensorflow
+
+    train_set = tokenized_dataset["train"].with_format("numpy")[:]
+    val_set = tokenized_dataset["val"].with_format("numpy")[:]
+    # test_set = tokenized_dataset["test"].with_format("numpy")[:]
+
+    # Tokenize inputs for evaluation set
+    validation_dataset = data_ds.map(
+        preprocess_validation_examples,
+        fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
+        batched=True,
+        remove_columns=data_ds['test'].column_names,
+    )
+
+    test_set = validation_dataset.remove_columns(["example_id", "offset_mapping"])
+    test_set = test_set["test"].with_format("numpy")[:]
+
+    train_dataset = tf.data.Dataset.from_tensor_slices(train_set)
+    train_dataset = train_dataset.batch(hyperparameters["batch_size"])
+
+    val_dataset = tf.data.Dataset.from_tensor_slices(val_set)
+    val_dataset = val_dataset.batch(hyperparameters["batch_size"])
+
+    test_dataset = tf.data.Dataset.from_tensor_slices(test_set)
+    test_dataset = test_dataset.batch(hyperparameters["batch_size"])
+
+    ## Use below if using GPU, otherwise leave commented out
+    # keras.mixed_precision.set_global_policy("mixed_float16")
+
+    optimizer = keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
+    model.compile(optimizer=optimizer)
+
+    model.fit(train_dataset, validation_data=val_dataset, epochs=hyperparameters["epochs"])
+
+    # Get starting and ending logits
+    outputs = model.predict(test_dataset)
+    start_logits = outputs.start_logits
+    end_logits = outputs.end_logits
+
+    # Evaluate test
+    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], data_ds["test"],
+                                                      list_ques)
+
+    return [eval_metrics, pred_ans, act_ans]
+
 def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     startTime = datetime.now()
 
@@ -36,8 +97,6 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     num_ques = len(list_ques)
     question_dict = {list_ques[ques_idx]: ques_idx for ques_idx in range(len(list_ques))}
     inverse_question_dict = {value: key for key, value in question_dict.items()}
-
-
 
     if trainingDetails["strat_on"] == "question" or trainingDetails["strat_on"] == "questions":
         num_strat_classes = num_ques
@@ -107,78 +166,92 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
         ds["test"] = val_test_split["train"]
         ds["val"] = val_test_split["test"]
 
+    if trainingDetails["oversample"] == "yes":
+        featureList2 = datasets.Features({'id': datasets.Value('string'),
+                                         'context': datasets.Value('string'),
+                                         'question': datasets.Value('string'),
+                                         'answers': datasets.Sequence(
+                                             feature={'text': datasets.Value(dtype='string'),
+                                                      'answer_start': datasets.Value(dtype='int32')})})
 
-    # Import tokenizer and model
-    tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
+        temp_train = ds["train"].to_pandas()
+        temp_train["text"] = temp_train["answers"].apply(lambda x: x["text"][0])
+        temp_train["answer_start"] = temp_train["answers"].apply(lambda x: x["answer_start"][0])
 
-    # The maximum length of a feature (question and context)
-    max_length = hyperparameters["max_length"]
-    # The authorized overlap between two part of the context when splitting
-    doc_stride = hyperparameters["doc_stride"]
+        oversample_dict = {}
+        for ques in list_ques:
+            temp_max = temp_train[temp_train["question"] == ques]["text"].value_counts().max()
+            oversample_dict[ques] = temp_train[temp_train["question"] == ques]["text"].value_counts().apply(
+                lambda x: temp_max - x).to_dict()
 
-    # Tokenize inputs for training
-    tokenized_dataset = ds.map(
-        preprocess_function,
-        fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
-        batched=True,
-        remove_columns=ds["train"].column_names)
+        oversampled_samples = temp_train.groupby("question").apply(lambda x: x.groupby("text").
+                                                                   apply(lambda g: g.sample(n=oversample_dict[x.name][g.name],
+                                                                                            replace=len(g) < oversample_dict[x.name][g.name])))
+        oversampled_samples = oversampled_samples.droplevel([0, 1]).reset_index(drop=True)
+        new_train = pd.concat([temp_train, oversampled_samples]).reset_index(drop=True).drop(columns=["text", "answer_start"])
+        ds["train"] = datasets.Dataset.from_pandas(new_train, split='train',
+                                                   features=featureList2, preserve_index=False)
 
-    # Convert to format useable with tensorflow
+    # Get total number of samples in test set and number of samples per question
+    num_samples_test = {}
+    num_samples_test["overall"] = len(ds["test"])
+    num_samples_test.update(pd.Series(ds["test"]["question"]).value_counts().to_dict())
 
-    train_set = tokenized_dataset["train"].with_format("numpy")[:]
-    val_set = tokenized_dataset["val"].with_format("numpy")[:]
-    # test_set = tokenized_dataset["test"].with_format("numpy")[:]
+    if trainingDetails["model_split"] == "all":
+        eval_metrics, pred_ans, act_ans = runModel(outputPath=outputPath, data_ds=ds, ds_dict=ds_dict, list_ques=list_ques,
+                                                   modelInfo=modelInfo, trainingDetails=trainingDetails, hyperparameters=hyperparameters)
 
-    # Tokenize inputs for evaluation set
-    validation_dataset = ds.map(
-        preprocess_validation_examples,
-        fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
-        batched=True,
-        remove_columns=ds['test'].column_names,
-    )
+        print(eval_metrics)
 
-    test_set = validation_dataset.remove_columns(["example_id", "offset_mapping"])
-    test_set = test_set["test"].with_format("numpy")[:]
+        # Add ground truth labels to predictions
+        for i in range(len(pred_ans)):
+            pred_ans[i]["actual_text"] = act_ans[i]["answers"]["text"]
+            pred_ans[i]["Question"] = ds["test"]["question"][i]
 
-    train_dataset = tf.data.Dataset.from_tensor_slices(train_set)
-    train_dataset = train_dataset.batch(hyperparameters["batch_size"])
+        endTime = datetime.now()
+        elapsedTime = endTime - startTime
+        printOverallResults(outputPath=outputPath, fileName="OverallResults.csv", modelDetails=modelInfo, dataset_dict = ds_dict,
+                            trainingDetails=trainingDetails, hyperparameters=hyperparameters,stats=eval_metrics,
+                            predicted_answers=pred_ans, execTime=elapsedTime, list_questions=list_ques,
+                            test_num_samples=num_samples_test)
 
-    val_dataset = tf.data.Dataset.from_tensor_slices(val_set)
-    val_dataset = val_dataset.batch(hyperparameters["batch_size"])
+    elif trainingDetails["model_split"] == "one":
+        total_pred_ans = []
+        temp_pred_ans_for_overall = []
+        temp_act_ans_for_overall = []
+        ques_metrics = {}
+        for curr_question in list_ques:
+            ds_sub = ds.filter(lambda row: row["question"]==curr_question)
+            eval_metrics, pred_ans, act_ans = runModel(outputPath=outputPath, data_ds=ds_sub, ds_dict=ds_dict,
+                                                       list_ques=list_ques,
+                                                       modelInfo=modelInfo, trainingDetails=trainingDetails,
+                                                       hyperparameters=hyperparameters)
+            print(eval_metrics)
 
-    test_dataset = tf.data.Dataset.from_tensor_slices(test_set)
-    test_dataset = test_dataset.batch(hyperparameters["batch_size"])
+            # temp_pred_ans = copy.deepcopy(pred_ans)
+            temp_pred_ans_for_overall += copy.deepcopy(pred_ans)
+            temp_act_ans_for_overall += act_ans
+            # Add ground truth labels to predictions
+            for i in range(len(pred_ans)):
+                pred_ans[i]["actual_text"] = act_ans[i]["answers"]["text"]
+                pred_ans[i]["Question"] = ds_sub["test"]["question"][i]
 
-    ## Use below if using GPU, otherwise leave commented out
-    # keras.mixed_precision.set_global_policy("mixed_float16")
+            total_pred_ans += pred_ans
+            ques_metrics[curr_question] = eval_metrics[curr_question]
+            K.clear_session()
 
-    optimizer = keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
-    model.compile(optimizer=optimizer)
+        ## Calculate overall metrics
+        metric = evaluate.load("squad")
+        ques_metrics["overall"] = metric.compute(predictions=temp_pred_ans_for_overall,
+                                                 references=temp_act_ans_for_overall)
 
-    model.fit(train_dataset, validation_data=val_dataset, epochs=hyperparameters["epochs"])
-    # model.fit(train_dataset, epochs=hyperparameters["epochs"])
-
-    # Get starting and ending logits
-    outputs = model.predict(test_dataset)
-    start_logits = outputs.start_logits
-    end_logits = outputs.end_logits
-
-    # Evaluate test
-    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], ds["test"],
-                                                      list_ques)
-    print(eval_metrics)
-
-    # Add ground truth labels to predictions
-    for i in range(len(pred_ans)):
-        pred_ans[i]["actual_text"] = act_ans[i]["answers"]["text"]
-        pred_ans[i]["Question"] = ds["test"]["question"][i]
-
-    endTime = datetime.now()
-    elapsedTime = endTime - startTime
-    printOverallResults(outputPath=outputPath, fileName="OverallResults.csv", modelDetails=modelInfo, dataset_dict = ds_dict,
-                        trainingDetails=trainingDetails, hyperparameters=hyperparameters,stats=eval_metrics,
-                        predicted_answers=pred_ans, execTime=elapsedTime, list_questions=list_ques)
-
+        endTime = datetime.now()
+        elapsedTime = endTime - startTime
+        printOverallResults(outputPath=outputPath, fileName="OverallResults.csv", modelDetails=modelInfo,
+                            dataset_dict=ds_dict,
+                            trainingDetails=trainingDetails, hyperparameters=hyperparameters, stats=ques_metrics,
+                            predicted_answers=total_pred_ans, execTime=elapsedTime, list_questions=list_ques,
+                            test_num_samples=num_samples_test)
 
 
 def main():
@@ -194,11 +267,13 @@ def main():
         os.mkdir(outputPath)
 
 
-    modelDetails = {"name":"gptj",
+    modelDetails = {"name":"distilbert",
                     "case":"lowercase"}
 
-    trainDetails = {"type":"split",
-                    "strat_on":"none"}
+    trainDetails = {"type":"split",       # 'split' for train/val/test split
+                    "model_split": "all", # 'all' if one model, 'one' if seperate model for each question
+                    "strat_on":"answers", # 'answers' if strat on answers, 'questions' for questions, 'none' for no strat
+                    "oversample":"yes"} # 'yes' if oversampling, 'no' for no oversampling
 
     hyperparameters = {"epochs": 1,
                        "max_length": 384,
