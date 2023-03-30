@@ -15,7 +15,7 @@ import inspect
 from datetime import datetime
 from transformers import pipeline
 from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering,  TFGPTJForQuestionAnswering, TFAutoModelForQuestionAnswering
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig, LlamaTokenizer, LlamaConfig
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import Model

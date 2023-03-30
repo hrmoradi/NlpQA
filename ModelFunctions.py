@@ -1,5 +1,5 @@
 from Libraries import *
-from transformers import TFDistilBertMainLayer, TFBertMainLayer
+from transformers import TFDistilBertMainLayer, TFBertMainLayer, LlamaModel
 from transformers import AutoConfig, AutoModel, TFAutoModel, TFAutoModelForQuestionAnswering, TFDistilBertPreTrainedModel
 from transformers.modeling_tf_utils import TFQuestionAnsweringLoss, unpack_inputs, get_initializer, input_processing, TFPreTrainedModel
 from transformers.modeling_tf_outputs import TFQuestionAnsweringModelOutput
@@ -10,18 +10,36 @@ import sys
 # However, currently returning much worse results despite it
 # supposed to be identical copy right now...
 
-class MyTFQuestionAnswering(TFDistilBertPreTrainedModel, TFQuestionAnsweringLoss):
-    def __init__(self, config, *inputs, **kwargs):
+class MyTFQuestionAnswering(TFPreTrainedModel, TFQuestionAnsweringLoss):
+    def __init__(self, modelName, *inputs, **kwargs):
+        # Auto functions like AutoConfig, AutoModel, etc. do not currently support Llama
+        if modelName == "llama":
+            self.modelName == "llama"
+            modelName = r"/home/dmlee/[models]/LLaMA"
+            config = LlamaConfig.from_pretrained(modelName)
+        else:
+            config = AutoConfig.from_pretrained(modelName)
         super().__init__(config, *inputs, **kwargs)
 
-        self.distilbert = TFDistilBertMainLayer(config, name="distilbert")
-        # self.distilbert = TFAutoModel.from_config(config)
-        # self.distilbert = self.distilbert.from_pretrained('distilbert-base-uncased-distilled-squad')
+        if modelName == "distilbert-base-uncased-distilled-squad" \
+                or modelName == "distilbert-base-cased-distilled-squad":
+            self.modelName = "distilbert"
+        elif modelName == "bert-base-uncased" \
+                or modelName == "bert-base-cased":
+            self.modelName = "bert"
+
+        if modelName == "llama":
+            self.model = LlamaModel.from_pretrained(modelName, config=config, from_pt=True)
+        else:
+            self.model = TFAutoModel.from_pretrained(modelName, config=config)
+
         self.qa_outputs = tf.keras.layers.Dense(
             config.num_labels, kernel_initializer=get_initializer(config.initializer_range), name="qa_outputs"
         )
         assert config.num_labels == 2, f"Incorrect number of labels {config.num_labels} instead of 2"
-        self.dropout = tf.keras.layers.Dropout(config.qa_dropout)
+
+        if self.modelName == "distilbert":
+            self.dropout = tf.keras.layers.Dropout(config.qa_dropout)
 
     @unpack_inputs
     def call(
@@ -48,7 +66,7 @@ class MyTFQuestionAnswering(TFDistilBertPreTrainedModel, TFQuestionAnsweringLoss
             are not taken into account for computing the loss.
         """
 
-        distilbert_output = self.distilbert(
+        model_output = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             head_mask=head_mask,
@@ -59,8 +77,11 @@ class MyTFQuestionAnswering(TFDistilBertPreTrainedModel, TFQuestionAnsweringLoss
             training=training,
         )
 
-        hidden_states = distilbert_output[0]  # (bs, max_query_len, dim)
-        hidden_states = self.dropout(hidden_states, training=training)  # (bs, max_query_len, dim)
+        hidden_states = model_output[0]  # (bs, max_query_len, dim)
+
+        if self.modelName == "distilbert":
+            hidden_states = self.dropout(hidden_states, training=training)  # (bs, max_query_len, dim)
+
         logits = self.qa_outputs(hidden_states)  # (bs, max_query_len, 2)
         start_logits, end_logits = tf.split(logits, 2, axis=-1)
         start_logits = tf.squeeze(start_logits, axis=-1)
@@ -73,15 +94,15 @@ class MyTFQuestionAnswering(TFDistilBertPreTrainedModel, TFQuestionAnsweringLoss
             loss = self.hf_compute_loss(labels, (start_logits, end_logits))
 
         if not return_dict:
-            output = (start_logits, end_logits) + distilbert_output[1:]
+            output = (start_logits, end_logits) + model_output[1:]
             return ((loss,) + output) if loss is not None else output
 
         return TFQuestionAnsweringModelOutput(
             loss=loss,
             start_logits=start_logits,
             end_logits=end_logits,
-            hidden_states=distilbert_output.hidden_states,
-            attentions=distilbert_output.attentions,
+            hidden_states=model_output.hidden_states,
+            attentions=model_output.attentions,
         )
 
     # Copied from transformers.models.bert.modeling_tf_bert.TFBertForQuestionAnswering.serving_output

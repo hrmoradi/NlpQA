@@ -8,8 +8,8 @@ from ModelFunctions import MyTFQuestionAnswering
 
 def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails, hyperparameters):
     # Import tokenizer and model
-    tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
-    # tokenizer = importTokenizer(modelInfo["name"], modelInfo["case"])
+    # tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
+    tokenizer = importTokenizer(modelInfo["name"], modelInfo["case"])
 
 
     # The maximum length of a feature (question and context)
@@ -62,13 +62,12 @@ def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails
     ## Use below if using GPU, otherwise leave commented out
     # keras.mixed_precision.set_global_policy("mixed_float16")
 
-    configN = AutoConfig.from_pretrained("distilbert-base-uncased-distilled-squad")
-
-
-    # model = MyTFQuestionAnswering(config=configN)
+    modelName = "distilbert-base-uncased-distilled-squad"
+    # configN = AutoConfig.from_pretrained(modelName)
+    model = MyTFQuestionAnswering(modelName)
     optimizer = tf.keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
     model.compile(optimizer=optimizer)
-    model.fit(train_set, epochs=hyperparameters["epochs"])
+    model.fit(train_set, epochs=1)
 
     # Get starting and ending logits
     outputs = model.predict(test_set)

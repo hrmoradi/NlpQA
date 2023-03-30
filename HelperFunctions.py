@@ -191,6 +191,13 @@ def importTokenizer(modelName, caseVer):
                 # rawName = r"/home/dmlee/[models]/bert-base-uncased"
             tokenizer = AutoTokenizer.from_pretrained(rawName)
 
+    elif modelName.lower() == "llama":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Linux":
+                # rawName = "EleutherAI/gpt-j-6B"
+                rawName = r"/home/dmlee/[models]/LLaMA"
+            tokenizer = LlamaTokenizer.from_pretrained(rawName)
+
     return tokenizer
 
 def preprocess_function(examples, tokenizer, max_length, doc_stride):
