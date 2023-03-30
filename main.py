@@ -1,12 +1,16 @@
 from Libraries import *
+from transformers import TFAutoModel
+from HelperFunctions import ReturnNotes, extractModelInfo, changeOPNote, importModelandTokenizer, importTokenizer, \
+    preprocess_function, preprocess_validation_examples, compute_metrics, printOverallResults
 
-from HelperFunctions import ReturnNotes, extractModelInfo, changeOPNote, importModelandTokenizer, preprocess_function,\
-    preprocess_validation_examples, compute_metrics, printOverallResults
+from ModelFunctions import MyTFQuestionAnswering
 
 
 def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails, hyperparameters):
     # Import tokenizer and model
     tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
+    # tokenizer = importTokenizer(modelInfo["name"], modelInfo["case"])
+
 
     # The maximum length of a feature (question and context)
     max_length = hyperparameters["max_length"]
@@ -22,8 +26,22 @@ def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails
 
     # Convert to format useable with tensorflow
 
-    train_set = tokenized_dataset["train"].with_format("numpy")[:]
-    val_set = tokenized_dataset["val"].with_format("numpy")[:]
+    # train_set = tokenized_dataset["train"].to_tf_dataset(
+    #     columns=["input_ids", "attention_mask"],
+    #     label_cols=["start_positions", "end_positions"],
+    #     batch_size=hyperparameters["batch_size"],
+    #     shuffle=False)
+
+    train_set = tokenized_dataset["train"].to_tf_dataset(
+        columns=["input_ids", "attention_mask", "start_positions", "end_positions"],
+        batch_size=hyperparameters["batch_size"],
+        shuffle=False)
+
+    val_set = val_set = tokenized_dataset["val"].to_tf_dataset(
+        columns=["input_ids", "attention_mask"],
+        label_cols=["start_positions", "end_positions"],
+        batch_size=hyperparameters["batch_size"],
+        shuffle=False)
     # test_set = tokenized_dataset["test"].with_format("numpy")[:]
 
     # Tokenize inputs for evaluation set
@@ -35,27 +53,25 @@ def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails
     )
 
     test_set = validation_dataset.remove_columns(["example_id", "offset_mapping"])
-    test_set = test_set["test"].with_format("numpy")[:]
-
-    train_dataset = tf.data.Dataset.from_tensor_slices(train_set)
-    train_dataset = train_dataset.batch(hyperparameters["batch_size"])
-
-    val_dataset = tf.data.Dataset.from_tensor_slices(val_set)
-    val_dataset = val_dataset.batch(hyperparameters["batch_size"])
-
-    test_dataset = tf.data.Dataset.from_tensor_slices(test_set)
-    test_dataset = test_dataset.batch(hyperparameters["batch_size"])
+    test_set = tokenized_dataset["test"].to_tf_dataset(
+        columns=["input_ids", "attention_mask"],
+        label_cols=["start_positions", "end_positions"],
+        batch_size=hyperparameters["batch_size"],
+        shuffle=False)
 
     ## Use below if using GPU, otherwise leave commented out
     # keras.mixed_precision.set_global_policy("mixed_float16")
 
-    optimizer = keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
-    model.compile(optimizer=optimizer)
+    configN = AutoConfig.from_pretrained("distilbert-base-uncased-distilled-squad")
 
-    model.fit(train_dataset, validation_data=val_dataset, epochs=hyperparameters["epochs"])
+
+    # model = MyTFQuestionAnswering(config=configN)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
+    model.compile(optimizer=optimizer)
+    model.fit(train_set, epochs=hyperparameters["epochs"])
 
     # Get starting and ending logits
-    outputs = model.predict(test_dataset)
+    outputs = model.predict(test_set)
     start_logits = outputs.start_logits
     end_logits = outputs.end_logits
 
@@ -71,6 +87,11 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     # Get train set
     medicalNotes_train = ReturnNotes(ds_dict["train"], dataPath)
 
+    # Modify pat_id to be concatenation of pat_id and CPT CODE
+    # since patient can have more than OP Note associated with them
+    medicalNotes_train["pat_id"] = medicalNotes_train.apply(
+        lambda x: x["pat_id"] + "_" + x["CPT Code Date"].strftime("%Y%m%d"), axis=1)
+
     # Change appropriate strings such as 'cr' to 'cruciate retaining' to match labels
     medicalNotes_train["OP_NOTE"] = medicalNotes_train["OP_NOTE"].apply(lambda x: changeOPNote(x))
     medicalNotes_train = medicalNotes_train.sample(frac=1, random_state=seed).reset_index(drop=True)
@@ -82,14 +103,14 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
     # Convert to correct nesting
     model_input_train["answers"] = model_input_train.apply(lambda x: {"text": [x["text"]], "answer_start": [x["answer_start"]]},
                                                            axis=1)
-
     # Drop unncessary columns
     model_input_train = model_input_train.drop(["text", "answer_start"], axis=1)
 
-    # # Include only these questions
-    # model_input_train = model_input_train[(model_input_train.question == "who is the maker of the implant?")]
-    # model_input_train = model_input_train[(model_input_train.question == "what is the constraint type?")]
-    # model_input_train = model_input_train[(model_input_train.question == "who is the laterality?")]
+    # Assign each question to individual id by adding capitalized first letter of each word in question
+    model_input_train["id"] = model_input_train.apply(
+        lambda x: x["id"] + "_" + "".join([word[0].upper() for word in x["question"].split()]), axis=1)
+
+    #########################################################################################
 
     # Get List of Questions
     list_ques = sorted(model_input_train["question"].unique().tolist())
@@ -230,7 +251,7 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
 
             # temp_pred_ans = copy.deepcopy(pred_ans)
             temp_pred_ans_for_overall += copy.deepcopy(pred_ans)
-            temp_act_ans_for_overall += act_ans
+            temp_act_ans_for_overall += copy.deepcopy(act_ans)
             # Add ground truth labels to predictions
             for i in range(len(pred_ans)):
                 pred_ans[i]["actual_text"] = act_ans[i]["answers"]["text"]
@@ -262,7 +283,7 @@ def main():
         outputPath = r"/home/dmlee/QA/results"
 
 
-    outputPath = os.path.join(outputPath, "20_03_23")
+    outputPath = os.path.join(outputPath, "28_03_23")
     if not os.path.exists(outputPath):
         os.mkdir(outputPath)
 
@@ -272,8 +293,8 @@ def main():
 
     trainDetails = {"type":"split",       # 'split' for train/val/test split
                     "model_split": "all", # 'all' if one model, 'one' if seperate model for each question
-                    "strat_on":"answers", # 'answers' if strat on answers, 'questions' for questions, 'none' for no strat
-                    "oversample":"yes"} # 'yes' if oversampling, 'no' for no oversampling
+                    "strat_on":"none", # 'answers' if strat on answers, 'questions' for questions, 'none' for no strat
+                    "oversample":"no"} # 'yes' if oversampling, 'no' for no oversampling
 
     hyperparameters = {"epochs": 1,
                        "max_length": 384,

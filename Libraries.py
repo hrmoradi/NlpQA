@@ -10,13 +10,16 @@ import random
 import platform
 import re
 import copy
+import inspect
 
 from datetime import datetime
 from transformers import pipeline
-from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering,  TFGPTJForQuestionAnswering
-from transformers import AutoTokenizer
+from transformers import DistilBertTokenizer, TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering,  TFGPTJForQuestionAnswering, TFAutoModelForQuestionAnswering
+from transformers import AutoTokenizer, AutoConfig
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras import Model
+from tensorflow.keras.layers import Input, Dense, Dropout
 from keras import backend as K
 import torch
 

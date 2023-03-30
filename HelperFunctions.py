@@ -136,6 +136,63 @@ def importModelandTokenizer(modelName, caseVer):
 
     return tokenizer, model
 
+def importTokenizer(modelName, caseVer):
+    if modelName.lower() == "distilbert":
+        if caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "distilbert-base-uncased-distilled-squad"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/distilbert-base-uncased-distilled-squad"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+        elif caseVer == "uppercase":
+            if platform.system() == "Windows":
+                rawName = "distilbert-base-cased-distilled-squad"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/distilbert-base-cased-distilled-squad"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+    elif modelName.lower() == "bert":
+        if caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "bert-base-uncased"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+        elif caseVer == "uppercase":
+            if platform.system() == "Windows":
+                rawName = "bert-base-cased"
+            elif platform.system() == "Linux":
+                rawName = r"/home/dmlee/[models]/bert-base-cased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+
+    elif modelName.lower() == "biobert":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "dmis-lab/biobert-v1.1"
+            elif platform.system() == "Linux":
+                rawName = "dmis-lab/biobert-v1.1"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+
+    elif modelName.lower() == "clinicalbert":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "emilyalsentzer/Bio_ClinicalBERT"
+            elif platform.system() == "Linux":
+                rawName = "emilyalsentzer/Bio_ClinicalBERT"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+
+    elif modelName.lower() == "gptj":
+        if caseVer == "uppercase" or caseVer == "lowercase":
+            if platform.system() == "Windows":
+                rawName = "EleutherAI/gpt-j-6B"
+            elif platform.system() == "Linux":
+                rawName = "EleutherAI/gpt-j-6B"
+                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
+            tokenizer = AutoTokenizer.from_pretrained(rawName)
+
+    return tokenizer
+
 def preprocess_function(examples, tokenizer, max_length, doc_stride):
     questions = [q.strip() for q in examples["question"]]
     inputs = tokenizer(
