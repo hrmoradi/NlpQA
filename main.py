@@ -1,15 +1,19 @@
 from Libraries import *
 from transformers import TFAutoModel
 from HelperFunctions import ReturnNotes, extractModelInfo, changeOPNote, importModelandTokenizer, importTokenizer, \
-    preprocess_function, preprocess_validation_examples, compute_metrics, printOverallResults
-
+    preprocess_function, preprocess_validation_examples, compute_metrics, printOverallResults, importCustomModel, getCaseVersion, \
+    compute_metricsPerBatch
+from DataProcessing import constructData
 from ModelFunctions import MyTFQuestionAnswering
 
 
 def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails, hyperparameters):
     # Import tokenizer and model
-    # tokenizer, model = importModelandTokenizer(modelInfo["name"], modelInfo["case"])
-    tokenizer = importTokenizer(modelInfo["name"], modelInfo["case"])
+    if trainingDetails["modelType"] != "custom":
+        tokenizer, model = importModelandTokenizer(modelInfo["name"])
+    else:
+        tokenizer = importTokenizer(modelInfo["name"])
+        model = importCustomModel(modelInfo["name"])
 
 
     # The maximum length of a feature (question and context)
@@ -18,73 +22,139 @@ def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails
     doc_stride = hyperparameters["doc_stride"]
 
     # Tokenize inputs for training
-    tokenized_dataset = data_ds.map(
+    train_set = data_ds["train"].map(
         preprocess_function,
         fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
         batched=True,
         remove_columns=data_ds["train"].column_names)
 
-    # Convert to format useable with tensorflow
+    # Tokenize inputs for validation
+    val_set = data_ds["val"].map(
+        preprocess_function,
+        fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
+        batched=True,
+        remove_columns=data_ds["val"].column_names)
 
-    # train_set = tokenized_dataset["train"].to_tf_dataset(
-    #     columns=["input_ids", "attention_mask"],
-    #     label_cols=["start_positions", "end_positions"],
-    #     batch_size=hyperparameters["batch_size"],
-    #     shuffle=False)
-
-    train_set = tokenized_dataset["train"].to_tf_dataset(
-        columns=["input_ids", "attention_mask", "start_positions", "end_positions"],
-        batch_size=hyperparameters["batch_size"],
-        shuffle=False)
-
-    val_set = val_set = tokenized_dataset["val"].to_tf_dataset(
-        columns=["input_ids", "attention_mask"],
-        label_cols=["start_positions", "end_positions"],
-        batch_size=hyperparameters["batch_size"],
-        shuffle=False)
-    # test_set = tokenized_dataset["test"].with_format("numpy")[:]
-
-    # Tokenize inputs for evaluation set
-    validation_dataset = data_ds.map(
+    # Tokenize inputs for test/evaluation set
+    validation_dataset = data_ds["test"].map(
         preprocess_validation_examples,
         fn_kwargs={'tokenizer': tokenizer, 'max_length': max_length, 'doc_stride': doc_stride},
         batched=True,
         remove_columns=data_ds['test'].column_names,
     )
-
     test_set = validation_dataset.remove_columns(["example_id", "offset_mapping"])
-    test_set = tokenized_dataset["test"].to_tf_dataset(
+
+
+    # Convert to format useable with tensorflow
+    train_set = train_set.to_tf_dataset(
+        columns=["input_ids", "attention_mask", "start_positions", "end_positions"],
+        #     label_cols=["start_positions", "end_positions"],
+        batch_size=hyperparameters["batch_size"],
+        shuffle=False)
+
+    val_set = val_set.to_tf_dataset(
         columns=["input_ids", "attention_mask"],
         label_cols=["start_positions", "end_positions"],
         batch_size=hyperparameters["batch_size"],
         shuffle=False)
 
+
     ## Use below if using GPU, otherwise leave commented out
     # keras.mixed_precision.set_global_policy("mixed_float16")
 
-    modelName = "distilbert-base-uncased-distilled-squad"
-    # configN = AutoConfig.from_pretrained(modelName)
-    model = MyTFQuestionAnswering(modelName)
     optimizer = tf.keras.optimizers.Adam(learning_rate=hyperparameters["learning_rate"])
     model.compile(optimizer=optimizer)
-    model.fit(train_set, epochs=1)
+    model.fit(train_set, epochs=hyperparameters["epochs"])
 
-    # Get starting and ending logits
-    outputs = model.predict(test_set)
-    start_logits = outputs.start_logits
-    end_logits = outputs.end_logits
+    if "xlnet" not in modelInfo["name"]:
+        test_set = test_set.to_tf_dataset(
+            columns=["input_ids", "attention_mask"],
+            batch_size=hyperparameters["batch_size"],
+            shuffle=False)
 
-    # Evaluate test
-    eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset["test"], data_ds["test"],
-                                                      list_ques)
+        # Get starting and ending logits
+        outputs = model.predict(test_set)
+        start_logits = outputs.start_logits
+        end_logits = outputs.end_logits
+
+        # Evaluate test
+        eval_metrics, pred_ans, act_ans = compute_metrics(start_logits, end_logits, validation_dataset, data_ds["test"],
+                                                          list_ques)
+    else:
+        list_lens = pd.Series(validation_dataset["example_id"]).value_counts(sort=False).tolist()
+        dict_question_abbr = {question: "".join([word[0].upper() for word in question.split()]) for question in
+                              list_ques}
+
+        # Create batches of whole examples
+        cut_points = [hyperparameters["batch_size"] * x for x in
+                      list(range((len(list_lens) // hyperparameters["batch_size"]) + 1))]
+        cut_points.append(len(list_lens))
+
+        prev_point = 0
+        new_list_lens = []
+        for i in range(1, len(cut_points)):
+            temp = list_lens[prev_point:cut_points[i]]
+            if sum(temp) > 0:
+                new_list_lens.append(sum(temp))
+            prev_point = cut_points[i]
+        list_lens = new_list_lens
+
+        eval_metrics = {}
+
+        metric = evaluate.load("squad")
+        cum_idx = 0
+        pred_ans = []
+        act_ans = []
+        # for (batch, values) in test_set[cum_idx:list_lens[curr_idx]]:
+        print(len(list_lens))
+        for i in range(len(list_lens)):
+            batch = test_set.select(range(cum_idx, cum_idx + list_lens[i])).to_tf_dataset(
+                batch_size=hyperparameters["batch_size"])
+            ex_id = list(set(validation_dataset.select(range(cum_idx, cum_idx + list_lens[i]))['example_id']))
+            if len(ex_id) > hyperparameters["batch_size"] and i != len(list_lens)-1:
+                print(ex_id)
+                print(f"Length of batch: {len(ex_id)}")
+                print(f"Intended batch_size: {hyperparameters['batch_size']}")
+                print(f"More than intended example ids in list. There should only be {hyperparameters['batch_size']}. Exiting...")
+                exit(1)
+
+            # print(next(iter(batch)))
+            outputs = model.predict(batch)
+            start_logits = outputs.start_logits
+            end_logits = outputs.end_logits
+            metric, temp_pred_ans, temp_act_ans = compute_metricsPerBatch(metric, start_logits, end_logits,
+                                                         validation_dataset.filter(
+                                                             lambda row: row['example_id'] in ex_id),
+                                                         data_ds["test"].filter(lambda row: row['id'] in ex_id),
+                                                         list_ques)
+            pred_ans += temp_pred_ans
+            act_ans += temp_act_ans
+
+            cum_idx += list_lens[i]
+
+        eval_metrics["overall"] = metric.compute()
+        for key, values in dict_question_abbr.items():
+            temp_metric = evaluate.load("squad")
+            eval_metrics[key] = temp_metric.compute(predictions=[row for row in pred_ans if values in row['id']],
+                                               references=[row for row in act_ans if values in row['id']])
 
     return [eval_metrics, pred_ans, act_ans]
 
-def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
+def Pipeline(outputPath, ds_dict, modelInfo, dataDetails, trainingDetails, hyperparameters):
     startTime = datetime.now()
 
-    # Get train set
-    medicalNotes_train = ReturnNotes(ds_dict["train"], dataPath)
+    # get whether model is cased or uncased
+    modelInfo["case"] = getCaseVersion(modelInfo["name"])
+
+    if dataDetails["Use_prebuilt_labels"] == "yes":
+
+        # Get train set
+        medicalNotes_train = ReturnNotes(ds_dict["train"], dataPath)
+        medicalNotes_train = medicalNotes_train.dropna(axis=0, subset=["Label_Stop"])
+        medicalNotes_train = medicalNotes_train.reset_index(drop=True)
+
+    elif dataDetails["Use_prebuilt_labels"] == "no":
+        medicalNotes_train = constructData(dataPath, ds_dict["train"])
 
     # Modify pat_id to be concatenation of pat_id and CPT CODE
     # since patient can have more than OP Note associated with them
@@ -277,23 +347,41 @@ def Pipeline(outputPath, ds_dict, modelInfo, trainingDetails, hyperparameters):
 def main():
     if platform.system() == "Windows":
         outputPath = r"D:\zProjects\QA\results"
+        # outputPath = r"C:\Users\David Lee\Desktop\TKA"
+
 
     elif platform.system() == "Linux":
         outputPath = r"/home/dmlee/QA/results"
 
 
-    outputPath = os.path.join(outputPath, "28_03_23")
+    outputPath = os.path.join(outputPath, "2023-04-07")
     if not os.path.exists(outputPath):
         os.mkdir(outputPath)
 
+    # Models to choose from (+ indicates cased versions ^ indicates uncased), * indicates not currently working)
+    # distilbert-base-uncased, distilbert-base-cased
+    # distilbert-base-uncased-distilled-squad, distilbert-base-cased-distilled-squad
+    # bert-base-uncased, bert-base-cased
+    # dmis-lab/biobert-v1.1
+    # emilyalsentzer/Bio_ClinicalBERT
+    # microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext
+    # roberta-base, roberta-large
+    # EleutherAI/gpt-j-6B (*)
+    # LLaMA\7B (*)
+    # xlnet-base-cased, xlnet-large-cased
+    # flan-t5-base, flan-t5-small, flan-t5-large, flan-t5-xl, flan-t5-xxl (*)
 
-    modelDetails = {"name":"distilbert",
-                    "case":"lowercase"}
+    modelDetails = {"name":"distilbert-base-uncased"}
 
-    trainDetails = {"type":"split",       # 'split' for train/val/test split
-                    "model_split": "all", # 'all' if one model, 'one' if seperate model for each question
-                    "strat_on":"none", # 'answers' if strat on answers, 'questions' for questions, 'none' for no strat
-                    "oversample":"no"} # 'yes' if oversampling, 'no' for no oversampling
+    trainDetails = {"type":"split",        # 'split' for train/val/test split
+                    "model_split": "all",  # 'all' if one model, 'one' if seperate model for each question
+                    "strat_on":"none",     # 'answers' if strat on answers, 'questions' for questions, 'none' for no strat
+                    "oversample":"no",     # 'yes' if oversampling, 'no' for no oversampling
+                    "modelType":"custom",        #'custom' if using custom implementation, otherwise generic HF implementation
+                    "notes":"run 2 - no prebuilt labels"}        # '' if no notes otherwise add notes
+
+    dataDetails = {"Use_prebuilt_labels":"no"}  # 'yes' to use prebuilt data and modified dataset, 'no' to perform that
+                                                 # as part of pipeline
 
     hyperparameters = {"epochs": 1,
                        "max_length": 384,
@@ -321,14 +409,17 @@ def main():
                     K.clear_session()
 
 
-    Pipeline(outputPath, ds_dict, modelDetails, trainDetails, hyperparameters)
+    Pipeline(outputPath=outputPath, ds_dict=ds_dict, modelInfo=modelDetails, dataDetails=dataDetails,
+             trainingDetails=trainDetails, hyperparameters=hyperparameters)
     K.clear_session()
 
-    #runLoop()
+
+#runLoop()
 
 
 if platform.system() == "Windows":
     dataPath = r"C:\Users\dmlee\PycharmProjects\TKA"
+    # dataPath = r"C:\Users\David Lee\Desktop\TKA"
 
 elif platform.system() == "Linux":
     dataPath = r"/home/dmlee/TKA"

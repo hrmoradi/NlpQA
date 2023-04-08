@@ -1,5 +1,5 @@
 from Libraries import *
-
+from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering
 
 def ReturnNotes(typeFile, data_path):
     xlsxPath = data_path
@@ -50,9 +50,6 @@ def extractModelInfo(Notes):
     model_input = model_input.dropna(subset=["text"], axis=0)
     return model_input
 
-# def stratifyOver(toStratOver):
-#     if toStratOver == "questions":
-#
 
 def changeOPNote(rawText):
     if re.search(r"(post stabilized)", rawText, re.IGNORECASE):
@@ -72,133 +69,58 @@ def changeOPNote(rawText):
 
     return rawText
 
-def importModelandTokenizer(modelName, caseVer):
-    if modelName.lower() == "distilbert":
-        if caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "distilbert-base-uncased-distilled-squad"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/distilbert-base-uncased-distilled-squad"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
-        elif caseVer == "uppercase":
-            if platform.system() == "Windows":
-                rawName = "distilbert-base-cased-distilled-squad"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/distilbert-base-cased-distilled-squad"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFDistilBertForQuestionAnswering.from_pretrained(rawName)
-    elif modelName.lower() == "bert":
-        if caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "bert-base-uncased"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFBertForQuestionAnswering.from_pretrained(rawName)
-        elif caseVer == "uppercase":
-            if platform.system() == "Windows":
-                rawName = "bert-base-cased"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/bert-base-cased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFBertForQuestionAnswering.from_pretrained(rawName)
+def getCaseVersion(modelName):
+    uncasedVersions = ["distilbert-base-uncased", "distilbert-base-uncased-distilled-squad",
+                       "bert-base-uncased"]
+    casedVersions = ["distilbert-base-cased", "distilbert-base-cased-distilled-squad",
+                     "bert-base-cased", "dmis-lab/biobert-v1.1", "emilyalsentzer/Bio_ClinicalBERT",
+                     "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext",
+                     "roberta-base", "roberta-large", r"LLaMA\7B", "xlnet-base-cased", "xlnet-large-cased"]
 
-    elif modelName.lower() == "biobert":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "dmis-lab/biobert-v1.1"
-            elif platform.system() == "Linux":
-                rawName = "dmis-lab/biobert-v1.1"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFBertForQuestionAnswering.from_pretrained(rawName, from_pt=True)
+    if modelName in uncasedVersions:
+        caseVer = "lowercase"
+    elif modelName in casedVersions:
+        caseVer = "uppercase"
 
-    elif modelName.lower() == "clinicalbert":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "emilyalsentzer/Bio_ClinicalBERT"
-            elif platform.system() == "Linux":
-                rawName = "emilyalsentzer/Bio_ClinicalBERT"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFBertForQuestionAnswering.from_pretrained(rawName, from_pt=True)
+    if caseVer is None:
+        raise TypeError
 
-    elif modelName.lower() == "gptj":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "EleutherAI/gpt-j-6B"
-            elif platform.system() == "Linux":
-                rawName = "EleutherAI/gpt-j-6B"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-            model = TFGPTJForQuestionAnswering.from_pretrained(rawName, from_pt=True)
+    return caseVer
+
+def importModelandTokenizer(modelName):
+    tfAutoModelsQA = ["distilbert-base-uncased", "distilbert-base-cased",
+                      "distilbert-base-uncased-distilled-squad","distilbert-base-cased-distilled-squad",
+                      "bert-base-uncased", "bert-base-cased", "dmis-lab/biobert-v1.1", "emilyalsentzer/Bio_ClinicalBERT",
+                      "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext","roberta-base", "roberta-large",
+                      "xlnet-base-cased", "xlnet-large-cased", "EleutherAI/gpt-j-6B"]
+
+    tokenizer = AutoTokenizer.from_pretrained(modelName)
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+
+    if modelName in tfAutoModelsQA:
+        model = TFAutoModelForQuestionAnswering.from_pretrained(modelName)
 
     return tokenizer, model
 
-def importTokenizer(modelName, caseVer):
-    if modelName.lower() == "distilbert":
-        if caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "distilbert-base-uncased-distilled-squad"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/distilbert-base-uncased-distilled-squad"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-        elif caseVer == "uppercase":
-            if platform.system() == "Windows":
-                rawName = "distilbert-base-cased-distilled-squad"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/distilbert-base-cased-distilled-squad"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-    elif modelName.lower() == "bert":
-        if caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "bert-base-uncased"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-        elif caseVer == "uppercase":
-            if platform.system() == "Windows":
-                rawName = "bert-base-cased"
-            elif platform.system() == "Linux":
-                rawName = r"/home/dmlee/[models]/bert-base-cased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
+def importTokenizer(modelName):
 
-    elif modelName.lower() == "biobert":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "dmis-lab/biobert-v1.1"
-            elif platform.system() == "Linux":
-                rawName = "dmis-lab/biobert-v1.1"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
+    tokenizer = AutoTokenizer.from_pretrained(modelName)
 
-    elif modelName.lower() == "clinicalbert":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "emilyalsentzer/Bio_ClinicalBERT"
-            elif platform.system() == "Linux":
-                rawName = "emilyalsentzer/Bio_ClinicalBERT"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-
-    elif modelName.lower() == "gptj":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Windows":
-                rawName = "EleutherAI/gpt-j-6B"
-            elif platform.system() == "Linux":
-                rawName = "EleutherAI/gpt-j-6B"
-                # rawName = r"/home/dmlee/[models]/bert-base-uncased"
-            tokenizer = AutoTokenizer.from_pretrained(rawName)
-
-    elif modelName.lower() == "llama":
-        if caseVer == "uppercase" or caseVer == "lowercase":
-            if platform.system() == "Linux":
-                # rawName = "EleutherAI/gpt-j-6B"
-                rawName = r"/home/dmlee/[models]/LLaMA"
-            tokenizer = LlamaTokenizer.from_pretrained(rawName)
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     return tokenizer
+
+def importCustomModel(modelName):
+
+
+    if "xlnet" not in modelName.lower():
+        model = MyTFQuestionAnswering(modelName, modelName)
+    else:
+        model = MyXLnetTFQuestionAnswering(modelName, modelName)
+    return model
+
 
 def preprocess_function(examples, tokenizer, max_length, doc_stride):
     questions = [q.strip() for q in examples["question"]]
@@ -352,6 +274,62 @@ def compute_metrics(start_logits, end_logits, features, examples, list_questions
 
     return result_dict, predicted_answers, theoretical_answers;
 
+def compute_metricsPerBatch(metric, start_logits, end_logits, features, examples, list_questions, n_best=20, max_answer_length=30):
+    example_to_features = collections.defaultdict(list)
+    for idx, feature in enumerate(features):
+        example_to_features[feature["example_id"]].append(idx)
+
+    predicted_answers = []
+    for example in tqdm(examples):
+        example_id = example["id"]
+        context = example["context"]
+        answers = []
+
+        # Loop through all features associated with that example
+        for feature_index in example_to_features[example_id]:
+            start_logit = start_logits[feature_index]
+            end_logit = end_logits[feature_index]
+            offsets = features[feature_index]["offset_mapping"]
+
+            start_indexes = np.argsort(start_logit)[-1: -n_best - 1: -1].tolist()
+            end_indexes = np.argsort(end_logit)[-1: -n_best - 1: -1].tolist()
+            for start_index in start_indexes:
+                for end_index in end_indexes:
+                    # Skip answers that are not fully in the context
+                    if offsets[start_index] is None or offsets[end_index] is None:
+                        continue
+                    # Skip answers with a length that is either < 0 or > max_answer_length
+                    if (
+                            end_index < start_index
+                            or end_index - start_index + 1 > max_answer_length
+                    ):
+                        continue
+
+                    answer = {
+                        "text": context[offsets[start_index][0]: offsets[end_index][1]],
+                        "logit_score": start_logit[start_index] + end_logit[end_index],
+                    }
+                    answers.append(answer)
+
+        # Select the answer with the best score
+        if len(answers) > 0:
+            best_answer = max(answers, key=lambda x: x["logit_score"])
+            predicted_answers.append(
+                {"id": example_id, "prediction_text": best_answer["text"]}
+            )
+        else:
+            predicted_answers.append({"id": example_id, "prediction_text": ""})
+
+    theoretical_answers = [{"id": ex["id"], "answers": ex["answers"]} for ex in examples]
+
+    ## Convert predicted and ground truth labels to lowercase prior to metric calculation
+    for i in range(len(predicted_answers)):
+        predicted_answers[i]["prediction_text"] = predicted_answers[i]["prediction_text"].lower()
+        theoretical_answers[i]["answers"]["text"] = [theoretical_answers[i]["answers"]["text"][0].lower()]
+
+    metric.add_batch(predictions=predicted_answers, references=theoretical_answers)
+
+    return metric, predicted_answers, theoretical_answers;
 
 def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
                         predicted_answers, execTime, list_questions, test_num_samples):
@@ -382,7 +360,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
          "Number of Questions": n_question, "Questions Per Model":trainingDetails["model_split"],
          "Overall Exact Match": stats['overall']["exact_match"], "Overall F1 Score": stats['overall']["f1"],
          "Execution Time": f"{hours}H{minutes}M",
-         "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": ""}, index=[0])
+         "random.seed": seed, "np seed": seed, "tf seed": seed, "Notes": trainingDetails["notes"]}, index=[0])
 
     if trainingDetails["type"] == "split":
         results[f"Hyperparameters"] = str(sorted(list(hyperparameters.items()), key=lambda x: x[0][0]))
