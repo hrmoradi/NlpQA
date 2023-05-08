@@ -1,5 +1,5 @@
 from Libraries import *
-from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering
+from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering, MyLlamaTFQuestionAnswering
 
 
 def ReturnNotes(typeFile, data_path, data_details):
@@ -213,7 +213,7 @@ def importCustomModel(modelName):
             if platform.system() == "Windows":
                 model_path = r"D:\zProjects\[Models]\gpt2-xl"
             elif platform.system() == "Linux":
-                r"/data8/[HF Models]/gpt2-xl"
+                model_path = r"/data8/[HF Models]/gpt2-xl"
         else:
             model_path = modelName
         model = MyTFQuestionAnswering(modelName, model_path)

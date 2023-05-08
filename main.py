@@ -384,7 +384,7 @@ def main():
         outputPath = r"/home/dmlee/QA/results"
 
 
-    outputPath = os.path.join(outputPath, "2023-05-03")
+    outputPath = os.path.join(outputPath, "2023-05-08")
     if not os.path.exists(outputPath):
         os.mkdir(outputPath)
 
