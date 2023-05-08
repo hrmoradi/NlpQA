@@ -17,10 +17,13 @@ from datetime import datetime
 
 from transformers import AutoModel, TFAutoModel, TFDistilBertPreTrainedModel
 from transformers import TFDistilBertForQuestionAnswering, TFBertForQuestionAnswering,  TFGPTJForQuestionAnswering, TFAutoModelForQuestionAnswering
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig,  LlamaTokenizer, LlamaConfig
 from transformers.modeling_tf_utils import TFQuestionAnsweringLoss, unpack_inputs, get_initializer, input_processing, TFPreTrainedModel
 from transformers.models.xlnet.modeling_tf_xlnet import TFXLNetForQuestionAnsweringSimpleOutput, TFXLNetPreTrainedModel
 from transformers.modeling_tf_outputs import TFQuestionAnsweringModelOutput
+
+from transformers.models.llama.modeling_tf_llama import TFLlamaModel
+from tokenizers.processors import TemplateProcessing
 
 import tensorflow as tf
 from tensorflow import keras

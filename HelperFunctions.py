@@ -1,23 +1,47 @@
 from Libraries import *
 from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering
 
-def ReturnNotes(typeFile, data_path):
+
+def ReturnNotes(typeFile, data_path, data_details):
     xlsxPath = data_path
     if typeFile == "smaller":
-        xlsxFileName = r"R521_27447_OP_NOTE_102.XLSX"
-        temp = pd.read_csv(os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv"), dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
+        if data_details["scale_back"] == 2:
+            print("Using original file...")
+            xlsxFileName = "R521_27447_OP_NOTE_102(Original).XLSX"
+        else:
+            print("Using corrected file...")
+            xlsxFileName = "R521_27447_OP_NOTE_102(Simplified).XLSX"
+
+        temp = pd.read_csv(os.path.join(data_path, "R521_27447_OP_NOTE_102_labels.csv"),
+                           dtype={"Label_Start": 'Int64', "Label_Stop": 'Int64', "Raw_Label_Start": 'Int64',
+                                  "Raw_Label_Stop": 'Int64'},
+                           keep_default_na=False)
 
     elif typeFile == "larger":
-        xlsxFileName = "TOTAL_KNEE_ARTHROPLASTY__(27447).XLSX"  # One with over 1000
-        temp = pd.read_csv(os.path.join(data_path, r"TOTAL_KNEE_ARTHROPLASTY__(27447)_labels.csv"),
-                           dtype={"Label_Start": 'Int64', "Label_end": 'Int64'})
+        if data_details["scale_back"] == 2:
+            print("Using original file...")
+            xlsxFileName = "TOTAL_KNEE_ARTHROPLASTY__(27447)(Original except for 2 lines).XLSX"
+        else:
+            print("Using corrected file...")
+            xlsxFileName = "TOTAL_KNEE_ARTHROPLASTY__(27447)(Simplified).XLSX"
 
-    medNotes_dtypes = {"OP_NOTE": str, "AGE at CPT CODE":'Int64', "height in Inches":'Float64', "Weight in KGs":'Float64',
-                       "Last recorded BMI":'Float64', "Ethnic_Group":str, "Smoking":str, "Sex":str, "Race":str}
+        temp = pd.read_csv(os.path.join(data_path, r"TOTAL_KNEE_ARTHROPLASTY__(27447)_labels.csv"),
+                           dtype={"Label_Start": 'Int64', "Label_Stop": 'Int64', "Raw_Label_Start": 'Int64',
+                                  "Raw_Label_Stop": 'Int64'},
+                           keep_default_na=False)
+
+    medNotes_dtypes = {"OP_NOTE": str, "AGE at CPT CODE": 'Int64', "height in Inches": 'Float64',
+                       "Weight in KGs": 'Float64',
+                       "Last recorded BMI": 'Float64', "Ethnic_Group": str, "Smoking": str, "Sex": str, "Race": str}
+
+    # If 3 questions, remove patella labels
+    if str(data_details["num_questions"]) == "3":
+        temp = temp.loc[temp["Question"] != "Is there patella resurfacing?", :]
 
     # Read in medical notes
     xlsx_file_path = os.path.join(xlsxPath, xlsxFileName)
     medicalNotes = pd.read_excel(xlsx_file_path, dtype=medNotes_dtypes, na_values="NULL")
+    medicalNotes = medicalNotes[~medicalNotes["pat_id"].isna()]
 
     # Drop rows that are all missing
     medicalNotes = medicalNotes.dropna(axis=0, how="all")
@@ -32,22 +56,49 @@ def ReturnNotes(typeFile, data_path):
     return medicalNotes
 
 
-def extractModelInfo(Notes):
-    model_input = Notes[["pat_id", "Question", "OP_NOTE", "Label", "Raw_Label", "Label_Start"]]
+def extractModelInfo(Notes, data_details, onlyUntrained=False):
+    model_input = Notes[
+        ["pat_id", "Question", "OP_NOTE", "Label", "Raw_Label", "Label_Start", "Label_Stop", "Raw_Label_Start",
+         "Raw_Label_Stop"]]
 
-    # For the constraint type question, the current label file has the ground truth CR/PS in Label
-    # But the text from OP_NOTE that was used to label it as such is located in Raw_Label
-    # So this is rewriting Label with Raw_Label for the Constraint Type question only
+    # For constraint type, only need to switch 'Label' and 'Raw_Label'
     model_input.loc[model_input["Question"] == "What is the constraint type?", "Label"] = model_input.loc[
         model_input["Question"] == "What is the constraint type?", "Raw_Label"]
-    model_input = model_input.drop(columns=["Raw_Label"])
 
-    # Rename columns to ones defined in custom feature list for huggingface dataset
-    model_input = model_input.rename({"pat_id": "id", "Question": "question",
-                                      "OP_NOTE": "context", "Label": "text", "Label_Start": "answer_start"}, axis=1)
+    if str(data_details["num_questions"]) == "4":
+        # For patellar resurfacing, need to switch 'Label', 'Label_Start', 'Label_Stop' w/
+        # 'Raw_Label', 'Raw_Label_Start', 'Raw_Label_Stop'
+        pat = model_input.loc[model_input["Question"] == "Is there patella resurfacing?", :].copy(deep=True)
+        model_input = model_input.loc[model_input["Question"] != "Is there patella resurfacing?", :]
+
+        pat.loc[pat["Question"] == "Is there patella resurfacing?", 'Label'] = pat.loc[
+            pat["Question"] == "Is there patella resurfacing?", 'Raw_Label']
+        pat.loc[pat["Question"] == "Is there patella resurfacing?", 'Label_Start'] = pat.loc[
+            pat["Question"] == "Is there patella resurfacing?", 'Raw_Label_Start']
+        pat.loc[pat["Question"] == "Is there patella resurfacing?", 'Label_Stop'] = pat.loc[
+            pat["Question"] == "Is there patella resurfacing?", 'Raw_Label_Stop']
+
+        model_input = model_input.drop(columns=['Label_Stop', 'Raw_Label', 'Raw_Label_Start', 'Raw_Label_Stop'])
+        pat = pat.drop(columns=['Label_Stop', 'Raw_Label', 'Raw_Label_Start', 'Raw_Label_Stop'])
+        # Rename columns to ones defined in custom feature list for huggingface dataset
+        model_input = model_input.rename({"pat_id": "id", "Question": "question",
+                                          "OP_NOTE": "context", "Label": "text", "Label_Start": "answer_start"}, axis=1)
+        pat = pat.rename({"pat_id": "id", "Question": "question",
+                          "OP_NOTE": "context", "Label": "text", "Label_Start": "answer_start"}, axis=1)
+
+    elif str(data_details["num_questions"]) == "3":
+        model_input = model_input.drop(columns=['Label_Stop', 'Raw_Label', 'Raw_Label_Start', 'Raw_Label_Stop'])
+        model_input = model_input.rename({"pat_id": "id", "Question": "question",
+                                          "OP_NOTE": "context", "Label": "text", "Label_Start": "answer_start"}, axis=1)
 
     # Remove any observations that do not have label
-    model_input = model_input.dropna(subset=["text"], axis=0)
+    if not onlyUntrained:
+        model_input = model_input.loc[model_input["text"] != ""]
+
+    if str(data_details["num_questions"]) == "4":
+        model_input = pd.concat([model_input, pat])
+        model_input = model_input.convert_dtypes()
+
     return model_input
 
 
@@ -75,7 +126,8 @@ def getCaseVersion(modelName):
     casedVersions = ["distilbert-base-cased", "distilbert-base-cased-distilled-squad",
                      "bert-base-cased", "dmis-lab/biobert-v1.1", "emilyalsentzer/Bio_ClinicalBERT",
                      "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext",
-                     "roberta-base", "roberta-large", r"LLaMA\7B", "xlnet-base-cased", "xlnet-large-cased"]
+                     "roberta-base", "roberta-large", r"decapoda-research/llama-7b-hf", "xlnet-base-cased", "xlnet-large-cased",
+                     "gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"]
 
     if modelName in uncasedVersions:
         caseVer = "lowercase"
@@ -103,24 +155,75 @@ def importModelandTokenizer(modelName):
 
     return tokenizer, model
 
+
 def importTokenizer(modelName):
+    if "llama" in modelName.lower():
+        if platform.system() == "Windows":
+            model_path = r"D:\zProjects\[Models]\llama-7b-hf"
+        elif platform.system() == "Linux":
+            model_path = r"/data8/[HF Models]/llama-7b-hf"
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    tokenizer = AutoTokenizer.from_pretrained(modelName)
+    elif "gpt2" in modelName.lower():
+        if "gpt2-xl" in modelName.lower():
+            if platform.system() == "Windows":
+                model_path = r"D:\zProjects\[Models]\gpt2-xl"
+            elif platform.system() == "Linux":
+                pass
+        else:
+            model_path = modelName
 
-    if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        bos = '<|startoftext|>'
+        eos = '<|endoftext|>'
+        pad = '<|pad|>'
+        special_tokens_dict = {'eos_token': eos, 'bos_token': bos, 'pad_token': pad}
+
+        tokenizer_orig = AutoTokenizer.from_pretrained(model_path)  # transformer library
+        tokenizer_orig.add_special_tokens(
+            special_tokens_dict)  # with this, you don't have to manually define the new tokens' ids
+        tokenizer = Tokenizer.from_pretrained(model_path)  # tokenizer library
+        tokenizer.post_processor = TemplateProcessing(
+            single="[CLS] $A [SEP]",
+            pair="[CLS] $A [SEP] $B:1 [SEP]:1",
+            special_tokens=[("[CLS]", tokenizer_orig.bos_token_id), ("[SEP]", tokenizer_orig.eos_token_id)],
+        )
+        tokenizer = GPT2TokenizerFast(
+            tokenizer_object=tokenizer)  # transformer library again but now with post processing
+        num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(modelName)
+
+        if tokenizer.pad_token is None:
+            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     return tokenizer
 
+
 def importCustomModel(modelName):
+    if "llama" in modelName.lower():
+        if platform.system() == "Windows":
+            model_path = r"D:\zProjects\[Models]\llama-7b-hf"
+        elif platform.system() == "Linux":
+            model_path = r"/data8/[HF Models]/llama-7b-hf"
+        model = MyLlamaTFQuestionAnswering(modelName, model_path)
+    elif "gpt2" in modelName.lower():
 
-
-    if "xlnet" not in modelName.lower():
-        model = MyTFQuestionAnswering(modelName, modelName)
+        if "gpt2-xl" in modelName.lower():
+            if platform.system() == "Windows":
+                model_path = r"D:\zProjects\[Models]\gpt2-xl"
+            elif platform.system() == "Linux":
+                r"/data8/[HF Models]/gpt2-xl"
+        else:
+            model_path = modelName
+        model = MyTFQuestionAnswering(modelName, model_path)
+    elif "xlnet" in modelName.lower():
+        model_path = modelName
+        model = MyXLnetTFQuestionAnswering(modelName, model_path)
     else:
-        model = MyXLnetTFQuestionAnswering(modelName, modelName)
+        model_path = modelName
+        model = MyTFQuestionAnswering(modelName, model_path)
     return model
-
 
 def preprocess_function(examples, tokenizer, max_length, doc_stride):
     questions = [q.strip() for q in examples["question"]]
@@ -331,6 +434,105 @@ def compute_metricsPerBatch(metric, start_logits, end_logits, features, examples
 
     return metric, predicted_answers, theoretical_answers;
 
+# This function calculates metrics for Patella question differently
+# For all negative questions, it auto assigns correctly predicted
+def compute_metrics2(start_logits, end_logits, features, examples, list_questions, n_best=20, max_answer_length=30):
+    metric = evaluate.load("squad")
+    example_to_features = collections.defaultdict(list)
+    for idx, feature in enumerate(features):
+        example_to_features[feature["example_id"]].append(idx)
+
+    predicted_answers = []
+    for example in tqdm(examples):
+        example_id = example["id"]
+        context = example["context"]
+        answers = []
+
+        # Loop through all features associated with that example
+        for feature_index in example_to_features[example_id]:
+            start_logit = start_logits[feature_index]
+            end_logit = end_logits[feature_index]
+            offsets = features[feature_index]["offset_mapping"]
+
+            start_indexes = np.argsort(start_logit)[-1: -n_best - 1: -1].tolist()
+            end_indexes = np.argsort(end_logit)[-1: -n_best - 1: -1].tolist()
+            for start_index in start_indexes:
+                for end_index in end_indexes:
+                    # Skip answers that are not fully in the context
+                    if offsets[start_index] is None or offsets[end_index] is None:
+                        continue
+                    # Skip answers with a length that is either < 0 or > max_answer_length
+                    if (
+                            end_index < start_index
+                            or end_index - start_index + 1 > max_answer_length
+                    ):
+                        continue
+
+                    answer = {
+                        "text": context[offsets[start_index][0]: offsets[end_index][1]],
+                        "logit_score": start_logit[start_index] + end_logit[end_index],
+                    }
+                    answers.append(answer)
+
+        # Select the answer with the best score
+        if len(answers) > 0:
+            best_answer = max(answers, key=lambda x: x["logit_score"])
+            predicted_answers.append(
+                {"id": example_id, "prediction_text": best_answer["text"]}
+            )
+        else:
+            predicted_answers.append({"id": example_id, "prediction_text": ""})
+
+    theoretical_answers = [{"id": ex["id"], "answers": ex["answers"]} for ex in examples]
+
+    ## Convert predicted and ground truth labels to lowercase prior to metric calculation
+    for i in range(len(predicted_answers)):
+        predicted_answers[i]["prediction_text"] = predicted_answers[i]["prediction_text"].lower()
+        theoretical_answers[i]["answers"]["text"] = [theoretical_answers[i]["answers"]["text"][0].lower()]
+
+    # get indices of negative examples and replace predicted text
+    neg_idx = [j for j in range(len(theoretical_answers)) if theoretical_answers[j]['answers']['text'][0] == ""]
+    for k in range(len(predicted_answers)):
+        # Must replace empty string with some string otherwise F1 score is not calculated correctly
+        if k in neg_idx:
+            predicted_answers[k]["prediction_text"] = "N/A"
+            theoretical_answers[k]["answers"]["text"] = ["N/A"]
+
+    result_dict = {}
+    result_dict["overall"] = metric.compute(predictions=predicted_answers, references=theoretical_answers)
+
+    # is there patella resurfacing?
+    list_of_pos_names = ["oval 3 peg patella", "patella button"]
+
+    # Only iterate over the questions present in this batch
+    list_questions = [question for question in list_questions if question in examples["question"]]
+    for i in range(len(list_questions)):
+
+        if list_questions[i] != "is there patella resurfacing?":
+            list_idx = [j for j in range(len(examples)) if examples["question"][j] == list_questions[i]]
+            sub_pred = [predicted_answers[k] for k in list_idx]
+            sub_theo = [theoretical_answers[k] for k in list_idx]
+            result_dict[list_questions[i]] = metric.compute(predictions=sub_pred, references=sub_theo)
+        # For patella question
+        else:
+            list_idx = [j for j in range(len(examples)) if examples["question"][j] == list_questions[i]]
+            sub_pred = [predicted_answers[k] for k in list_idx]
+            sub_theo = [theoretical_answers[k] for k in list_idx]
+
+            # get indices of negative examples and replace predicted text
+            neg_idx = [j for j in range(len(sub_theo)) if sub_theo[j]['answers']['text'][0] == ""]
+            for k in range(len(sub_pred)):
+                # Must replace empty string with some string otherwise F1 score is not calculated correctly
+                if k in neg_idx:
+                    sub_pred[k]["prediction_text"] = "N/A"
+                    sub_theo[k]["answers"]["text"] = ["N/A"]
+            #             print(sub_pred)
+            #             print("----------")
+            #             print(sub_theo)
+            result_dict[list_questions[i]] = metric.compute(predictions=sub_pred, references=sub_theo)
+
+    return result_dict, predicted_answers, theoretical_answers;
+
 def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, trainingDetails, hyperparameters, stats,
                         predicted_answers, execTime, list_questions, test_num_samples):
     """
@@ -403,7 +605,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     if hyperparameters["epochs"] == 1:
         outName = f'[{qid}] Predicted Output - {hyperparameters["epochs"]} Epoch.txt'
     else:
-        outName = f'[{qid}]Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
+        outName = f'[{qid}] Predicted Output - {hyperparameters["epochs"]} Epochs.txt'
 
     # Sort predicted answers in alphabetical order in order of Question then ground truth label
     predicted_answers = sorted(predicted_answers, key=lambda x: (x["Question"], x["actual_text"][0], x["id"]))
