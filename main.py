@@ -14,6 +14,8 @@ def runModel(outputPath, data_ds, ds_dict, list_ques, modelInfo, trainingDetails
     else:
         tokenizer = importTokenizer(modelInfo["name"])
         model = importCustomModel(modelInfo["name"])
+        if "gpt2" in modelInfo["name"].lower():
+            model.model.resize_token_embeddings(len(tokenizer))
 
 
     # The maximum length of a feature (question and context)
