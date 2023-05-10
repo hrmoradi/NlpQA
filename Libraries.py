@@ -22,7 +22,7 @@ from transformers.modeling_tf_utils import TFQuestionAnsweringLoss, unpack_input
 from transformers.models.xlnet.modeling_tf_xlnet import TFXLNetForQuestionAnsweringSimpleOutput, TFXLNetPreTrainedModel
 from transformers.modeling_tf_outputs import TFQuestionAnsweringModelOutput
 
-from transformers.models.llama.modeling_tf_llama import TFLlamaModel
+from modeling_tf_llama import TFLlamaModel
 from tokenizers import Tokenizer
 from tokenizers.processors import TemplateProcessing
 
