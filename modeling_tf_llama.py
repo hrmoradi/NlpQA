@@ -206,9 +206,9 @@ class TFLlamaRotaryEmbedding(tf.keras.layers.Layer):
         t = tf.range(self.max_seq_len_cached, dtype=self.inv_freq.dtype)
         freqs = tf.einsum("i,j->ij", t, self.inv_freq)
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = tf.concat([freqs, freqs], axis=-1)
         #self.cos_cached = tf.Variable(tf.math.cos(emb)[None, None, :, :], trainable=False, name="cos_cached")
         #self.sin_cached = tf.Variable(tf.math.sin(emb)[None, None, :, :], trainable=False, name="sin_cached")
+        emb = tf.concat([freqs, freqs], axis=-1)
         self.cos_cached = tf.constant(tf.math.cos(emb)[None, None, :, :], name="cos_cached")
         self.sin_cached = tf.constant(tf.math.sin(emb)[None, None, :, :], name="sin_cached")
 
@@ -242,8 +242,10 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
     
     cos = tf.expand_dims(tf.gather(cos, position_ids), axis=1)  # [bs, 1, seq_len, dim]
     sin = tf.expand_dims(tf.gather(sin, position_ids), axis=1)  # [bs, 1, seq_len, dim]
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    #q_embed = (q * cos) + (rotate_half(q) * sin)
+    #k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = tf.math.multiply(q, cos) + tf.math.multiply(rotate_half(q), sin)
+    k_embed = tf.math.multiply(k, cos) + tf.math.multiply(rotate_half(k), sin)
     return q_embed, k_embed
 
 class TFLlamaMLP(tf.keras.layers.Layer):
@@ -497,8 +499,12 @@ class TFLlamaMainLayer(tf.keras.layers.Layer):
             embeddings_initializer = get_initializer(self.config.initializer_range),
             name="embed_tokens")
 
-        
         self.layers = [TFLlamaDecoderLayer(config, name=f"layers.{i}") for i in range(config.num_hidden_layers)]
+        #with tf.device_scope('/gpu:0'):
+        #    self.layers = [TFLlamaDecoderLayer(config, name=f"layers.{i}") for i in range(config.num_hidden_layers//2)]
+        #with tf.device_scope('/gpu:1'):
+        #    self.layers = [TFLlamaDecoderLayer(config, name=f"layers.{i}") for i in
+        #                   range(config.num_hidden_layers//2, config.num_hidden_layers)]
         self.norm = TFLlamaRMSNorm(eps=config.rms_norm_eps, name="norm")
 
 

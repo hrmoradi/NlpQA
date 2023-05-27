@@ -1,5 +1,5 @@
 from Libraries import *
-from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering, MyLlamaTFQuestionAnswering
+from ModelFunctions import MyTFQuestionAnswering, MyXLnetTFQuestionAnswering, MyLlamaQuestionAnswering
 
 
 def ReturnNotes(typeFile, data_path, data_details):
@@ -161,7 +161,7 @@ def importTokenizer(modelName):
         if platform.system() == "Windows":
             model_path = r"D:\zProjects\[Models]\llama-7b-hf"
         elif platform.system() == "Linux":
-            model_path = r"/data8/[HF Models]/llama-7b-hf"
+            model_path = r"/home/dmlee892/models/llama-7b-hf"
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     elif "gpt2" in modelName.lower():
@@ -205,15 +205,17 @@ def importCustomModel(modelName):
         if platform.system() == "Windows":
             model_path = r"D:\zProjects\[Models]\llama-7b-hf"
         elif platform.system() == "Linux":
-            model_path = r"/data8/[HF Models]/llama-7b-hf"
-        model = MyLlamaTFQuestionAnswering(modelName, model_path)
+            # model_path = r"/data8/[HF Models]/llama-7b-hf"
+            model_path = modelName
+        model = MyLlamaQuestionAnswering(modelName, model_path)
     elif "gpt2" in modelName.lower():
 
         if "gpt2-xl" in modelName.lower():
             if platform.system() == "Windows":
                 model_path = r"D:\zProjects\[Models]\gpt2-xl"
             elif platform.system() == "Linux":
-                model_path = r"/data8/[HF Models]/gpt2-xl"
+                #model_path = r"/data8/[HF Models]/gpt2-xl"
+                model_path = modelName
         else:
             model_path = modelName
         model = MyTFQuestionAnswering(modelName, model_path)
@@ -559,6 +561,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
     results = pd.DataFrame(
         {"Model": modelDetails["name"], "Case": modelDetails["case"], "Training Dataset": dataset_dict["train"],
          "Split Type": trainingDetails["type"], "Stratification":trainingDetails["strat_on"], "Oversample":trainingDetails["oversample"],
+         "Train Kept":trainingDetails["train_num"],
          "Number of Questions": n_question, "Questions Per Model":trainingDetails["model_split"],
          "Overall Exact Match": stats['overall']["exact_match"], "Overall F1 Score": stats['overall']["f1"],
          "Execution Time": f"{hours}H{minutes}M",
@@ -592,7 +595,7 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
 
     if trainingDetails["type"] == "split":
         list_before = ["QID", "Model", "Case", "Training Dataset", "Split Type", "Stratification", "Oversample",
-                       "Number of Questions", "Questions Per Model", "Questions",
+                       "Train Kept", "Number of Questions", "Questions Per Model", "Questions",
                        "Overall Exact Match", "Overall F1 Score"]
 
         list_after = ["Hyperparameters", "Execution Time", "random.seed", "np seed", "tf seed", "Notes"]
@@ -622,3 +625,89 @@ def printOverallResults(outputPath, fileName, modelDetails, dataset_dict, traini
         f.write("\n\n")
         for line in predicted_answers:
             f.write(f"{line}\n")
+
+
+def getTrainIndices(train_dict, wanted_percent=1):
+    ans_idx_dict = {}
+    ans_cnt_dict = {}
+    for idx, ans in enumerate(train_dict['answers']):
+        curr_ans = ans['text'][0]
+        if curr_ans not in ans_idx_dict.keys():
+            ans_idx_dict[curr_ans] = [idx]
+            ans_cnt_dict[curr_ans] = 1
+        else:
+            ans_idx_dict[curr_ans].append(idx)
+            ans_cnt_dict[curr_ans] += 1
+
+    ans_cnt_dict = dict(sorted(ans_cnt_dict.items(), key=lambda item: item[1], reverse=True))
+    print(f"Original Numbers: {ans_cnt_dict}")
+
+    wanted_amount = ceil(wanted_percent * len(train_dict))
+    print(f"Original Amount: {len(train_dict)}")
+    print(f"Wanted Amount: {wanted_amount}")
+
+    wnt_cnt_dict = {k: ceil((wanted_amount * v) / len(train_dict)) for k, v in ans_cnt_dict.items()}
+    diff = sum(list(wnt_cnt_dict.values())) - wanted_amount
+    if diff > 0:
+        # Removes the excess number from the answer with the largest number of samples
+        wnt_cnt_dict[next(iter(wnt_cnt_dict))] -= diff
+    print(f"Downsampled Numbers: {wnt_cnt_dict}")
+    select_idx = []
+    for k, v in wnt_cnt_dict.items():
+        random.seed(seed)
+        select_idx += random.sample(ans_idx_dict[k], v)
+
+    return select_idx
+
+
+def split_by_pt(to_split, split_percent=0.6):
+    num_orig = len(to_split)
+    uniq_ids = []
+    [uniq_ids.append(x.rsplit("_", 1)[0]) for x in to_split["id"] if x.rsplit("_", 1)[0] not in uniq_ids]
+    num_uniq_ids = len(uniq_ids)
+
+    set1_want_num = ceil(num_uniq_ids * split_percent)
+    set2_want_num = num_uniq_ids - set1_want_num
+
+    random.seed(seed)
+    set1_sel_ids = random.sample(uniq_ids, set1_want_num)
+    set2_sel_ids = []
+    [set2_sel_ids.append(x) for x in uniq_ids if x not in set1_sel_ids]
+
+    set1 = to_split.filter(lambda ex: ex["id"].rsplit("_", 1)[0] in set1_sel_ids)
+    set2 = to_split.filter(lambda ex: ex["id"].rsplit("_", 1)[0] in set2_sel_ids)
+
+    return set1, set2
+
+
+# Copied from https://github.com/huggingface/transformers/blob/main/examples/pytorch/question-answering/run_qa_no_trainer.py
+def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
+    """
+    Create and fill numpy array of size len_of_validation_data * max_length_of_output_tensor
+    Args:
+        start_or_end_logits(:obj:`tensor`):
+            This is the output predictions of the model. We can only enter either start or end logits.
+        eval_dataset: Evaluation dataset
+        max_len(:obj:`int`):
+            The maximum length of the output tensor. ( See the model.eval() part for more details )
+    """
+
+    step = 0
+    # create a numpy array and fill it with -100.
+    logits_concat = np.full((len(dataset), max_len), -100, dtype=np.float64)
+    # Now since we have create an array now we will populate it with the outputs gathered using accelerator.gather_for_metrics
+    for i, output_logit in enumerate(start_or_end_logits):  # populate columns
+        # We have to fill it such that we have to take the whole tensor and replace it on the newly created array
+        # And after every iteration we have to change the step
+
+        batch_size = output_logit.shape[0]
+        cols = output_logit.shape[1]
+
+        if step + batch_size < len(dataset):
+            logits_concat[step : step + batch_size, :cols] = output_logit
+        else:
+            logits_concat[step:, :cols] = output_logit[: len(dataset) - step]
+
+        step += batch_size
+
+    return logits_concat
